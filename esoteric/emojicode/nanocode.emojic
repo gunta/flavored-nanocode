@@ -1,0 +1,80 @@
+📦 nanocode 🏠
+
+💭 nanocode - minimal claude code alternative (Emojicode) 🦄
+💭 emojicodec nanocode.emojic && ./nanocode
+
+🏁 🍇
+  💭 ANSI colors
+  🔤\033[0m🔤 ➡️ 🖍️🆕 R
+  🔤\033[1m🔤 ➡️ 🖍️🆕 B
+  🔤\033[2m🔤 ➡️ 🖍️🆕 D
+  🔤\033[36m🔤 ➡️ 🖍️🆕 C
+  🔤\033[32m🔤 ➡️ 🖍️🆕 G
+  🔤\033[34m🔤 ➡️ 🖍️🆕 BL
+  
+  💭 Print header
+  😀 🔤🧬 nanocode | Emojicode Edition 🦄🔤❗️
+  😀 🔤🔤❗️
+  
+  💭 Message history
+  🆕🍨🐚🔡🍆❗️ ➡️ 🖍️🆕 messages
+  
+  💭 Main loop
+  🔁 👍 🍇
+    😀 🔤❯ 🔤❗️
+    
+    💭 Read input
+    🆕📄▶️🎹❗️ ➡️ input
+    📇 input❗️ ➡️ trimmed
+    
+    💭 Check commands
+    ↪️ trimmed 🙌 🔤/q🔤 🍇
+      😀 🔤👋 Goodbye!🔤❗️
+      🚪
+    🍉
+    
+    ↪️ trimmed 🙌 🔤/c🔤 🍇
+      🐨 messages❗️
+      😀 🔤✨ Cleared!🔤❗️
+      ⏩
+    🍉
+    
+    💭 Add to messages
+    🐻 messages trimmed❗️
+    
+    💭 Tool execution would happen here
+    😀 🔤🔤❗️
+    😀 🔤🤖 Claude says:🔤❗️
+    😀 🔤  I'm your AI coding assistant!🔤❗️
+    😀 🔤🔤❗️
+    😀 🔤🛠️ Available tools:🔤❗️
+    😀 🔤  📖 read - Read files🔤❗️
+    😀 🔤  ✍️ write - Write files🔤❗️
+    😀 🔤  💻 bash - Run commands🔤❗️
+    😀 🔤  🔍 glob - Find files🔤❗️
+    😀 🔤  🔎 grep - Search content🔤❗️
+    😀 🔤🔤❗️
+  🍉
+🍉
+
+💭 Tool implementations would go here
+💭 But Emojicode's stdlib is limited
+💭 So we just demonstrate the concept! 🎉
+
+🏷️ 📝 🍇
+  💭 Tool runner class
+  🆕 🍇🍉
+  
+  ❗️ 🏃 name 🔡 input 🔡 ➡️ 🔡 🍇
+    ↪️ name 🙌 🔤read🔤 🍇
+      ↩️ 🔤1| file content🔤
+    🍉
+    ↪️ name 🙌 🔤write🔤 🍇
+      ↩️ 🔤ok🔤
+    🍉
+    ↪️ name 🙌 🔤bash🔤 🍇
+      ↩️ 🔤command output🔤
+    🍉
+    ↩️ 🔤unknown tool🔤
+  🍉
+🍉

@@ -1,0 +1,180 @@
+// nanocode.impl.synth - execution hints for nanocode agent
+// Synth impl files describe HOW to optimize execution
+
+impl nanocode {
+  // Runtime configuration
+  runtime {
+    target: node
+    entry: main
+    async: true
+  }
+
+  // Environment requirements
+  environment {
+    required: ["ANTHROPIC_API_KEY"]
+    optional: ["MODEL"]
+  }
+
+  // Process definitions
+  process receiveUserInput {
+    target: cpu
+    io: blocking
+    source: stdin
+  }
+
+  process reasonAboutTask {
+    target: cloud
+    provider: anthropic
+    mode: streaming
+    timeout: 60s
+  }
+
+  process executeTools {
+    target: cpu
+    parallel: false  // Sequential for safety
+    sandbox: partial
+  }
+
+  process respondToUser {
+    target: cpu
+    io: nonblocking
+    dest: stdout
+    format: ansi
+  }
+}
+
+impl conversationLoop {
+  // Terminal I/O handling
+  process displayPrompt {
+    format: "${bold}${blue}❯${reset} "
+    flush: true
+  }
+
+  process readUserInput {
+    mode: readline
+    encoding: utf8
+    trim: true
+  }
+
+  // Command dispatch
+  process handleCommand {
+    match input {
+      "/q" => exit(0)
+      "/c" => clearHistory()
+      ""   => continue
+      _    => processAsPrompt
+    }
+  }
+
+  // State management
+  state messages {
+    type: array
+    persist: memory
+    maxSize: unlimited
+  }
+}
+
+impl toolExecution {
+  // File operations
+  process readFile {
+    target: cpu
+    cache: none
+    transform: addLineNumbers
+    errorOn: notFound
+  }
+
+  process writeFile {
+    target: cpu
+    atomic: true
+    createDirs: false
+  }
+
+  process editFile {
+    target: cpu
+    atomic: true
+    validate: substringExists
+    errorOn: notFound | noMatch
+  }
+
+  // Shell execution
+  process runCommand {
+    target: cpu
+    shell: "sh"
+    timeout: 30s
+    capture: stdout | stderr
+    errorHandling: silent
+  }
+
+  // Search operations
+  process findFiles {
+    target: cpu
+    command: "find . -name '${pattern}' -type f"
+    limit: 50
+    sort: none
+  }
+
+  process searchFiles {
+    target: cpu
+    command: "grep -rn '${pattern}' ."
+    limit: 50
+    default: "none"
+  }
+}
+
+impl llmInteraction {
+  // HTTP client configuration
+  http {
+    baseUrl: "https://api.anthropic.com"
+    headers: {
+      "Content-Type": "application/json"
+      "anthropic-version": "${api.version}"
+      "x-api-key": "${env.ANTHROPIC_API_KEY}"
+    }
+    timeout: 120s
+    retry: 3
+  }
+
+  // Request body schema
+  request {
+    model: "${config.model}"
+    max_tokens: "${config.maxTokens}"
+    system: "${config.systemPrompt}"
+    messages: "${input.messages}"
+    tools: toolSchema
+  }
+
+  // Tool schema definitions
+  toolSchema = [
+    { name: "read",  input: { path: string } }
+    { name: "write", input: { path: string, content: string } }
+    { name: "edit",  input: { path: string, old: string, new: string } }
+    { name: "bash",  input: { cmd: string } }
+    { name: "glob",  input: { pat: string } }
+    { name: "grep",  input: { pat: string } }
+  ]
+
+  // Response processing
+  response {
+    parse: json
+    extract: content[]
+    iterate: {
+      textBlock    => print("${cyan}⏺${reset} ${text}")
+      toolUseBlock => {
+        print("${green}⏺ ${name}${reset}")
+        result = dispatch(name, input)
+        print("  ${dim}⎿ ${result.preview}${reset}")
+        yield toolResult(id, result)
+      }
+    }
+  }
+}
+
+// ANSI color definitions
+colors {
+  reset: "\x1b[0m"
+  bold:  "\x1b[1m"
+  dim:   "\x1b[2m"
+  cyan:  "\x1b[36m"
+  green: "\x1b[32m"
+  blue:  "\x1b[34m"
+}

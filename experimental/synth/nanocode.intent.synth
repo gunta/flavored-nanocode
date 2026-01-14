@@ -1,0 +1,122 @@
+// nanocode.intent.synth - minimal claude code alternative (Synth)
+// Synth is intent-based: describe WHAT you want, not HOW to do it.
+// https://github.com/code-agents/synth
+
+intent nanocode {
+  description: "Minimal AI coding assistant with tool use"
+  
+  input: userPrompt
+  output: assistedCode
+  
+  // Core conversational loop
+  flow = {
+    receiveUserInput,
+    reasonAboutTask,
+    executeTools,
+    respondToUser,
+    repeat
+  }
+
+  // Tool capabilities this agent needs
+  capabilities = {
+    fileSystem: {
+      read: "Read file contents with line numbers"
+      write: "Create or overwrite files"
+      edit: "Replace text in existing files"
+    }
+    
+    shell: {
+      bash: "Execute shell commands with timeout"
+    }
+    
+    search: {
+      glob: "Find files by pattern"
+      grep: "Search content in files"
+    }
+  }
+
+  // Agent behavior constraints
+  optimize {
+    target: helpfulness
+    style: concise
+    safety: true
+    learn: false  // Stateless between sessions
+  }
+}
+
+intent conversationLoop {
+  description: "Interactive REPL for coding assistance"
+  
+  input: terminalInput
+  output: terminalOutput
+  
+  flow = {
+    displayPrompt,
+    readUserInput,
+    handleCommand,
+    callLLM,
+    processToolCalls,
+    displayResponse,
+    loop
+  }
+
+  commands = {
+    "/q": "Quit the session"
+    "/c": "Clear conversation history"
+  }
+
+  state = {
+    messages: "Conversation history"
+    context: "Working directory and environment"
+  }
+}
+
+intent toolExecution {
+  description: "Execute tools requested by the LLM"
+  
+  input: toolCall
+  output: toolResult
+  
+  dispatch = {
+    when name == "read":  readFile(path)
+    when name == "write": writeFile(path, content)
+    when name == "edit":  editFile(path, old, new)
+    when name == "bash":  runCommand(cmd)
+    when name == "glob":  findFiles(pattern)
+    when name == "grep":  searchFiles(pattern)
+    default:              error("Unknown tool")
+  }
+
+  errorHandling = {
+    strategy: graceful
+    report: true
+    continue: true
+  }
+}
+
+intent llmInteraction {
+  description: "Communicate with Claude API"
+  
+  input: conversationMessages
+  output: assistantResponse
+  
+  api = {
+    provider: anthropic
+    endpoint: "/v1/messages"
+    version: "2023-06-01"
+  }
+
+  config = {
+    model: env("MODEL") ?? "claude-sonnet-4-20250514"
+    maxTokens: 4096
+    systemPrompt: "Concise assistant"
+  }
+
+  response = {
+    parse: contentBlocks
+    handle: {
+      textBlock:    displayToUser
+      toolUseBlock: executeAndContinue
+    }
+  }
+}

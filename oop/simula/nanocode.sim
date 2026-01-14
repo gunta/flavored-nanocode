@@ -1,0 +1,133 @@
+! nanocode - minimal claude code alternative (Simula)
+! Simula: The FIRST object-oriented language (1967)
+! This is where OOP began!
+
+Begin
+    ! ANSI colors (as text constants)
+    Text R, B, D, C, G, BL;
+    R :- "^[[0m";    ! Reset
+    B :- "^[[1m";    ! Bold
+    D :- "^[[2m";    ! Dim
+    C :- "^[[36m";   ! Cyan
+    G :- "^[[32m";   ! Green
+    BL :- "^[[34m";  ! Blue
+    
+    ! Message class - the first OOP class ever!
+    Class Message(role, content);
+        Text role, content;
+    Begin
+        ! Simula invented classes in 1967
+    End;
+    
+    ! Tool class hierarchy
+    Class Tool;
+    Virtual: Text Procedure Execute;
+    Begin
+        ! Abstract base class
+    End;
+    
+    Tool Class ReadTool(path);
+        Text path;
+    Begin
+        Text Procedure Execute;
+        Begin
+            ! File reading would go here
+            Execute :- "1| file content";
+        End;
+    End;
+    
+    Tool Class WriteTool(path, content);
+        Text path, content;
+    Begin
+        Text Procedure Execute;
+        Begin
+            Execute :- "ok";
+        End;
+    End;
+    
+    Tool Class BashTool(cmd);
+        Text cmd;
+    Begin
+        Text Procedure Execute;
+        Begin
+            Execute :- "executed";
+        End;
+    End;
+    
+    ! Nanocode main class
+    Class Nanocode;
+    Begin
+        Ref(Message) Array messages(1:100);
+        Integer msgCount;
+        Text key, model, input;
+        Boolean running;
+        
+        msgCount := 0;
+        running := True;
+        
+        OutText(B); OutText("nanocode"); OutText(R);
+        OutText(" | "); OutText(D);
+        OutText("Simula - First OOP Language (1967)");
+        OutText(R); OutImage;
+        OutImage;
+        
+        While running Do Begin
+            OutText(B); OutText(BL); OutText(">");
+            OutText(R); OutText(" ");
+            
+            InImage;
+            input :- SysIn.Image.Strip;
+            
+            If input = "" Then
+                ! Continue
+            Else If input = "/q" Then
+                running := False
+            Else If input = "/c" Then Begin
+                msgCount := 0;
+                OutText(G); OutText("* Cleared"); OutText(R);
+                OutImage;
+            End
+            Else Begin
+                msgCount := msgCount + 1;
+                messages(msgCount) :- New Message("user", input);
+                
+                ! Response
+                OutImage;
+                OutText(C); OutText("*"); OutText(R);
+                OutText(" Simula: Where objects were born!");
+                OutImage;
+                OutText(D);
+                OutText("  Classes, inheritance, virtual methods - all from here!");
+                OutText(R);
+                OutImage; OutImage;
+            End;
+        End;
+        
+        OutText("Goodbye!"); OutImage;
+    End;
+    
+    ! Entry point
+    New Nanocode;
+End;
+
+! Why Simula for AI agents?
+!
+! 1. HISTORICAL SIGNIFICANCE
+!    - First language with classes (1967)
+!    - Invented OOP concepts
+!    - Influenced everything that followed
+!
+! 2. SIMULATION ORIGINS
+!    - Created for simulation modeling
+!    - AI agents ARE simulations of intelligence
+!    - Perfect conceptual fit
+!
+! 3. COROUTINES
+!    - Simula had coroutines in 1967!
+!    - Async/await pattern ancestor
+!    - Agent loops are coroutines
+!
+! 4. UNDERSTANDING ROOTS
+!    - To know where we're going
+!    - We must know where we came from
+!    - AI builds on 60 years of progress

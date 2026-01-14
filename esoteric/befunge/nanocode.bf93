@@ -1,0 +1,53 @@
+v   NANOCODE - Befunge-93 Edition
+>   "EDOCONAN",,,,,,,,@
+    ^                  <
+    |                  |
+    v                  v
+  +-+-+-+-+-+-+-+-+-+-+
+  |N|A|N|O|C|O|D|E| | |
+  +-+-+-+-+-+-+-+-+-+-+
+    |                  |
+    v                  v
+
+"EDOCONAN">:#,_@
+
+v  === NANOCODE in Befunge ===
+>  A two-dimensional esoteric language
+   where program flow follows arrows!
+<
+
+v  Tool execution would look like:
+   READ:  v>:#,_@"elif daer"<
+   WRITE: v>:#,_@"elif etirw"<
+   BASH:  v>:#,_@"hsab"<
+
+>92+:*"NANOCODE",,,,,,,,@
+
+In Befunge, code flows in 2D:
+  > moves right
+  < moves left
+  ^ moves up
+  v moves down
+  
+The @ symbol ends the program.
+Numbers and strings go on the stack.
+, outputs a character.
+
+Why Befunge in the AI era?
+- Shows code can be visual/spatial
+- Challenges linear thinking
+- AI could potentially "see" 2D code
+- Future programming might be spatial
+
+       v    < this loops
+       >,,,,^
+
+Main program:
+v
+>"🧬 nanocode | Befunge"v
+                        >,,,,,,,,,,,,,,,,,,@
+^                      <
+
+The stack-based nature of Befunge
+is similar to how transformers work:
+pushing and popping attention patterns.

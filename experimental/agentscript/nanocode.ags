@@ -1,0 +1,481 @@
+/**
+ * nanocode - minimal claude code alternative (AgentScript)
+ * 
+ * AgentScript is an AI-first intermediate language with embedded testing,
+ * contract programming, and transpilation to TypeScript.
+ * 
+ * @backstory A concise coding agent demonstrating AgentScript's design philosophy.
+ * @see https://github.com/code-agents/agentscript
+ */
+
+// --- Types ---
+
+type MessageRole = "user" | "assistant"
+type ToolName = "read" | "write" | "edit" | "bash" | "glob" | "grep"
+
+type Message = {
+  role: MessageRole
+  content: string | ContentBlock[]
+}
+
+type TextBlock = {
+  type: "text"
+  text: string
+}
+
+type ToolUseBlock = {
+  type: "tool_use"
+  id: string
+  name: ToolName
+  input: Record<string, unknown>
+}
+
+type ContentBlock = TextBlock | ToolUseBlock
+
+type ToolResult = {
+  type: "tool_result"
+  tool_use_id: string
+  content: string
+}
+
+type ApiResponse = {
+  content: ContentBlock[]
+}
+
+// --- Configuration ---
+
+const CONFIG = {
+  apiKey: env("ANTHROPIC_API_KEY"),
+  model: env("MODEL") ?? "claude-sonnet-4-20250514",
+  apiUrl: "https://api.anthropic.com/v1/messages",
+  maxTokens: 8192
+}
+
+// --- ANSI Colors ---
+
+const RESET = "\x1b[0m"
+const BOLD = "\x1b[1m"
+const DIM = "\x1b[2m"
+const CYAN = "\x1b[36m"
+const GREEN = "\x1b[32m"
+const BLUE = "\x1b[34m"
+
+// --- Tool Implementations ---
+
+/**
+ * Read file contents with line numbers.
+ * 
+ * @backstory Core capability for code inspection and understanding.
+ * 
+ * @requires path.length > 0: "Path cannot be empty"
+ * @requires offset >= 0: "Offset must be non-negative"
+ * @requires limit > 0: "Limit must be positive"
+ * 
+ * @error FileNotFound: File does not exist at path
+ * @error PermissionDenied: Cannot read file
+ * 
+ * @test { path: "test.txt" } -> "1| hello\n2| world"
+ * @test { path: "", } -> FileNotFound
+ * 
+ * @performance { path: "small.txt" } -> expect < 10ms
+ */
+function readFile(args: { path: string, offset?: number, limit?: number }): string {
+  const { path, offset = 0, limit = 9999 } = args
+  const content = fs.readFile(path)
+  const lines = content.split("\n").slice(offset, offset + limit)
+  return lines.map((line, i) => `${i + offset + 1}| ${line}`).join("\n")
+}
+
+/**
+ * Write content to a file.
+ * 
+ * @backstory Enables code generation and modification.
+ * 
+ * @requires path.length > 0: "Path cannot be empty"
+ * @requires content != null: "Content is required"
+ * 
+ * @error PermissionDenied: Cannot write to path
+ * @error DirectoryNotFound: Parent directory does not exist
+ * 
+ * @test { path: "out.txt", content: "hello" } -> "ok"
+ */
+function writeFile(args: { path: string, content: string }): string {
+  fs.writeFile(args.path, args.content)
+  return "ok"
+}
+
+/**
+ * Edit file by replacing text.
+ * 
+ * @backstory Surgical edits without rewriting entire files.
+ * 
+ * @requires path.length > 0: "Path cannot be empty"
+ * @requires old.length > 0: "Old text cannot be empty"
+ * 
+ * @error FileNotFound: File does not exist
+ * @error TextNotFound: Old text not found in file
+ * @error AmbiguousMatch: Multiple matches found, use all=true
+ * 
+ * @test { path: "f.txt", old: "a", new: "b" } -> "ok"
+ * @test { path: "f.txt", old: "missing", new: "x" } -> TextNotFound
+ */
+function editFile(args: { path: string, old: string, new: string, all?: boolean }): string {
+  const content = fs.readFile(args.path)
+  
+  match (content.includes(args.old)) {
+    case false -> return "error: not found"
+    case true -> {
+      const count = content.split(args.old).length - 1
+      if (count > 1 && !args.all) {
+        return `error: ${count}x matches, use all=true`
+      }
+      const updated = args.all 
+        ? content.replaceAll(args.old, args.new)
+        : content.replace(args.old, args.new)
+      fs.writeFile(args.path, updated)
+      return "ok"
+    }
+  }
+}
+
+/**
+ * Execute shell command.
+ * 
+ * @backstory Run build tools, tests, and system commands.
+ * 
+ * @requires cmd.length > 0: "Command cannot be empty"
+ * 
+ * @error Timeout: Command exceeded 30 second limit
+ * @error ExecutionError: Command failed with non-zero exit
+ * 
+ * @test { cmd: "echo hello" } -> "hello\n"
+ * @test { cmd: "exit 1" } -> ExecutionError
+ * 
+ * @performance { cmd: "echo test" } -> expect < 100ms
+ * @timeout 30s
+ */
+function runBash(args: { cmd: string }): string {
+  const result = shell.exec(args.cmd, { timeout: 30000 })
+  return result.stdout || result.stderr || "(empty)"
+}
+
+/**
+ * Find files matching glob pattern.
+ * 
+ * @backstory Discover files for exploration and batch operations.
+ * 
+ * @requires pat.length > 0: "Pattern cannot be empty"
+ * 
+ * @test { pat: "*.ts" } -> "nanocode.ts\nother.ts"
+ * @test { pat: "nonexistent" } -> "none"
+ */
+function globFiles(args: { pat: string, path?: string }): string {
+  const basePath = args.path ?? "."
+  const pattern = `${basePath}/${args.pat}`.replace("//", "/")
+  const files = fs.glob(pattern, { recursive: true })
+    |> sortBy(f => fs.mtime(f), "desc")
+    |> take(50)
+    |> join("\n")
+  return files || "none"
+}
+
+/**
+ * Search files for pattern.
+ * 
+ * @backstory Find code references and usages across codebase.
+ * 
+ * @requires pat.length > 0: "Pattern cannot be empty"
+ * 
+ * @test { pat: "function" } -> "file.ts:10:function foo()"
+ * @test { pat: "zzz_no_match" } -> "none"
+ */
+function grepFiles(args: { pat: string, path?: string }): string {
+  const basePath = args.path ?? "."
+  const results = fs.grep(args.pat, basePath, { recursive: true })
+    |> take(50)
+    |> map(m => `${m.file}:${m.line}:${m.text}`)
+    |> join("\n")
+  return results || "none"
+}
+
+// --- Tool Dispatcher ---
+
+/**
+ * Execute a tool by name with given input.
+ * 
+ * @backstory Central dispatch for all agent tool capabilities.
+ * 
+ * @requires name in ["read", "write", "edit", "bash", "glob", "grep"]
+ */
+function executeTool(name: ToolName, input: Record<string, unknown>): string {
+  try {
+    match (name) {
+      case "read"  -> return readFile(input)
+      case "write" -> return writeFile(input)
+      case "edit"  -> return editFile(input)
+      case "bash"  -> return runBash(input)
+      case "glob"  -> return globFiles(input)
+      case "grep"  -> return grepFiles(input)
+    }
+  } catch (e) {
+    return `error: ${e.message}`
+  }
+}
+
+// --- Tool Schema for API ---
+
+const TOOL_SCHEMA = [
+  {
+    name: "read",
+    description: "Read file",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        offset: { type: "integer" },
+        limit: { type: "integer" }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "write",
+    description: "Write file",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" }
+      },
+      required: ["path", "content"]
+    }
+  },
+  {
+    name: "edit",
+    description: "Edit file",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        old: { type: "string" },
+        new: { type: "string" },
+        all: { type: "boolean" }
+      },
+      required: ["path", "old", "new"]
+    }
+  },
+  {
+    name: "bash",
+    description: "Run command",
+    input_schema: {
+      type: "object",
+      properties: { cmd: { type: "string" } },
+      required: ["cmd"]
+    }
+  },
+  {
+    name: "glob",
+    description: "Find files",
+    input_schema: {
+      type: "object",
+      properties: {
+        pat: { type: "string" },
+        path: { type: "string" }
+      },
+      required: ["pat"]
+    }
+  },
+  {
+    name: "grep",
+    description: "Search files",
+    input_schema: {
+      type: "object",
+      properties: {
+        pat: { type: "string" },
+        path: { type: "string" }
+      },
+      required: ["pat"]
+    }
+  }
+]
+
+// --- API Client ---
+
+/**
+ * Call Anthropic API with messages.
+ * 
+ * @backstory Core LLM integration for agent reasoning.
+ * 
+ * @requires messages.length > 0: "Messages cannot be empty"
+ * @requires CONFIG.apiKey.length > 0: "API key required"
+ * 
+ * @error ApiError: Failed to communicate with API
+ * @error RateLimit: API rate limit exceeded
+ * @error InvalidResponse: Unexpected response format
+ * 
+ * @performance messages.length < 10 -> expect < 5000ms
+ */
+async function callAnthropic(messages: Message[]): ApiResponse {
+  const response = await fetch(CONFIG.apiUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      "x-api-key": CONFIG.apiKey
+    },
+    body: JSON.stringify({
+      model: CONFIG.model,
+      max_tokens: CONFIG.maxTokens,
+      system: `Concise coding assistant. cwd: ${process.cwd()}`,
+      messages,
+      tools: TOOL_SCHEMA
+    })
+  })
+  return response.json()
+}
+
+// --- Agent State Machine ---
+
+/**
+ * Agent state machine for managing conversation flow.
+ * 
+ * States: idle -> processing -> tool_execution -> processing -> idle
+ * 
+ * @backstory Explicit state transitions for reliable agent behavior.
+ */
+machine AgentMachine {
+  initial: idle
+
+  state idle {
+    on USER_INPUT -> processing
+    on QUIT -> terminated
+  }
+
+  state processing {
+    on API_RESPONSE -> {
+      guard (response.hasToolUse) -> tool_execution
+      guard (response.isText) -> idle
+    }
+    on API_ERROR -> idle
+  }
+
+  state tool_execution {
+    on TOOLS_COMPLETE -> processing
+    on TOOL_ERROR -> processing
+  }
+
+  state terminated {
+    final
+  }
+}
+
+// --- Response Processing ---
+
+/**
+ * Process API response, execute tools, update messages.
+ * 
+ * @backstory Transform LLM output into actions and user feedback.
+ * 
+ * @returns true if tools were executed (needs another API call)
+ */
+function processResponse(response: ApiResponse, messages: Message[]): boolean {
+  const results: ToolResult[] = []
+
+  for (const block of response.content) {
+    match (block.type) {
+      case "text" -> {
+        console.log(`\n${CYAN}⏺${RESET} ${block.text}`)
+      }
+      case "tool_use" -> {
+        console.log(`\n${GREEN}⏺ ${block.name}${RESET}`)
+        const result = executeTool(block.name, block.input)
+        const preview = result.split("\n")[0].slice(0, 60)
+        console.log(`  ${DIM}⎿ ${preview}${RESET}`)
+        results.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: result
+        })
+      }
+    }
+  }
+
+  messages.push({ role: "assistant", content: response.content })
+
+  if (results.length > 0) {
+    messages.push({ role: "user", content: results })
+    return true
+  }
+  return false
+}
+
+// --- Agent Loop ---
+
+/**
+ * Run agent loop until no more tool calls.
+ * 
+ * @backstory Recursive processing until LLM produces final text response.
+ * 
+ * @requires messages.length > 0: "Need at least one message"
+ */
+async function agentLoop(messages: Message[]): void {
+  const response = await callAnthropic(messages)
+  const hasToolUse = processResponse(response, messages)
+  if (hasToolUse) {
+    await agentLoop(messages)
+  }
+}
+
+// --- REPL ---
+
+/**
+ * Interactive read-eval-print loop.
+ * 
+ * @backstory User interface for conversational coding assistance.
+ * 
+ * Commands:
+ *   /q - quit
+ *   /c - clear history
+ */
+async function repl(messages: Message[]): void {
+  const input = await readline(`${BOLD}${BLUE}❯${RESET} `)
+  
+  match (input.trim()) {
+    case "" -> await repl(messages)
+    case "/q" -> return
+    case "/c" -> {
+      messages.length = 0
+      console.log(`${GREEN}⏺ Cleared${RESET}`)
+      await repl(messages)
+    }
+    case _ -> {
+      messages.push({ role: "user", content: input })
+      try {
+        await agentLoop(messages)
+        console.log("")
+      } catch (e) {
+        console.log(`\x1b[31m⏺ Error: ${e.message}${RESET}`)
+      }
+      await repl(messages)
+    }
+  }
+}
+
+// --- Main Entry ---
+
+/**
+ * Initialize and start the nanocode agent.
+ * 
+ * @backstory Bootstrap the conversational coding experience.
+ * 
+ * @requires env("ANTHROPIC_API_KEY"): "API key must be set"
+ */
+async function main(): void {
+  console.log(`${BOLD}nanocode${RESET} | ${DIM}AgentScript + ${CONFIG.model}${RESET}\n`)
+  const messages: Message[] = []
+  await repl(messages)
+}
+
+// --- Execute ---
+
+main()

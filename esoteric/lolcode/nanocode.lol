@@ -1,0 +1,60 @@
+BTW nanocode - minimal claude code alternative (LOLCODE)
+BTW HAI LOLCODE!!
+
+HAI 1.4
+
+I HAS A KEY ITZ ""
+I HAS A MODEL ITZ "claude-sonnet-4-20250514"
+I HAS A MSGS ITZ A BUKKIT
+
+HOW IZ I COLORIN YR TXT AN YR CLR
+    FOUND YR CLR SMOOSH TXT MKAY
+IF U SAY SO
+
+VISIBLE "O HAI! IM IN UR TERMINALZ"
+VISIBLE "NANOCODE | LOLCODE FLAVR"
+VISIBLE ""
+
+IM IN YR LOOP
+
+    VISIBLE "KTHX> "!
+    I HAS A INPUT
+    GIMMEH INPUT
+
+    INPUT R "NOTHIN", O RLY?
+        YA RLY
+            GTFO
+    OIC
+
+    BOTH SAEM INPUT AN "/Q", O RLY?
+        YA RLY
+            VISIBLE "KTHXBAI!"
+            GTFO
+    OIC
+
+    BOTH SAEM INPUT AN "/C", O RLY?
+        YA RLY
+            MSGS R A BUKKIT
+            VISIBLE "LOL CLEARD"
+            GTFO
+    OIC
+
+    BTW Add message to history
+    MSGS HAS A NEWMSG ITZ A BUKKIT
+    NEWMSG HAS A ROLE ITZ "USER"
+    NEWMSG HAS A CONTENT ITZ INPUT
+
+    BTW Would call API here but LOLCODE has no HTTP
+    BTW So we just pretend
+
+    VISIBLE ""
+    VISIBLE "CEILING CAT SEZ:"
+    VISIBLE "I CAN HAS CHEEZBURGER?"
+    VISIBLE ""
+    VISIBLE "BTW: LOLCODE CANT ACTUALLY DO HTTP"
+    VISIBLE "BTW: BUT ITS STILL CUTE THO"
+    VISIBLE ""
+
+IM OUTTA YR LOOP
+
+KTHXBYE

@@ -1,0 +1,89 @@
+-- nanocode - minimal claude code alternative (Unison)
+-- ucm run nanocode
+-- Unison is a content-addressed language where code is immutable
+
+-- ANSI colors
+nanocode.r = "\ESC[0m"
+nanocode.b = "\ESC[1m"
+nanocode.d = "\ESC[2m"
+nanocode.c = "\ESC[36m"
+nanocode.g = "\ESC[32m"
+nanocode.bl = "\ESC[34m"
+
+-- Tool input type
+type nanocode.ToolInput = { path : Optional Text, content : Optional Text, cmd : Optional Text, pat : Optional Text }
+
+-- Tool execution
+nanocode.tool : Text -> ToolInput -> '{IO, Exception} Text
+nanocode.tool name input = 
+  match name with
+    "read" -> 
+      'let
+        path = Optional.getOrElse "" input.path
+        content = readFileUtf8 (FilePath.fromText path)
+        lines = Text.split ?\n content
+        numbered = List.mapWithIndex (i line -> Nat.toText (i + 1) ++ "| " ++ line) lines
+        Text.join "\n" numbered
+    
+    "write" ->
+      'let
+        path = Optional.getOrElse "" input.path
+        content = Optional.getOrElse "" input.content
+        writeFileUtf8 (FilePath.fromText path) content
+        "ok"
+    
+    "bash" ->
+      'let
+        cmd = Optional.getOrElse "" input.cmd
+        result = !runCommand ["sh", "-c", cmd]
+        result.stdout
+    
+    _ -> '"unknown"
+
+-- Schema definition
+nanocode.schema : Text
+nanocode.schema = """
+[{"name":"read","description":"Read file","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
+{"name":"write","description":"Write file","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
+{"name":"bash","description":"Run command","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]
+"""
+
+-- Message type
+type nanocode.Message = { role : Text, content : Text }
+
+-- Main loop
+nanocode.loop : Text -> Text -> [Message] -> '{IO, Exception} ()
+nanocode.loop key model messages = 
+  'let
+    putText (b ++ bl ++ "❯" ++ r ++ " ")
+    input = !getLine |> Text.trim
+    
+    match input with
+      "" -> !loop key model messages
+      "/q" -> ()
+      "/c" -> 
+        printLine (g ++ "⏺ Cleared" ++ r)
+        !loop key model []
+      userInput ->
+        newMessages = messages :+ Message.Message "user" userInput
+        
+        -- Would call API here
+        printLine ("\n" ++ c ++ "⏺" ++ r ++ " I'm your Unison-powered assistant!")
+        printLine ""
+        
+        !loop key model newMessages
+
+-- Entry point
+nanocode.main : '{IO, Exception} ()
+nanocode.main = 
+  'let
+    key = getEnv "ANTHROPIC_API_KEY" |> Optional.getOrElse ""
+    model = getEnv "MODEL" |> Optional.getOrElse "claude-sonnet-4-20250514"
+    
+    printLine (b ++ "nanocode" ++ r ++ " | " ++ d ++ "Unison + " ++ model ++ r ++ "\n")
+    
+    !loop key model []
+
+-- In Unison, code is identified by its hash, not its name
+-- This means nanocode.main will always refer to THIS exact implementation
+-- Perfect for reproducible AI agents!

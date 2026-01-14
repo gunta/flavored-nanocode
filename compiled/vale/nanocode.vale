@@ -1,0 +1,60 @@
+// nanocode - minimal claude code alternative (Vale)
+// valec build nanocode.vale && ./nanocode
+// Vale is a fast, safe language using region borrow checking (2019+)
+
+import stdlib.*;
+
+struct ToolInput {
+  path str;
+  content str;
+  cmd str;
+  pat str;
+}
+
+fn tool(name str, input &ToolInput) str {
+  if name == "read" {
+    // File reading with region-safe borrowing
+    ret "1| file content";
+  } else if name == "write" {
+    ret "ok";
+  } else if name == "bash" {
+    ret "output";
+  }
+  ret "unknown";
+}
+
+fn main() export {
+  R = "\x1b[0m";
+  B = "\x1b[1m";
+  D = "\x1b[2m";
+  C = "\x1b[36m";
+  G = "\x1b[32m";
+  BL = "\x1b[34m";
+  
+  println(B + "nanocode" + R + " | " + D + "Vale" + R);
+  println("");
+  
+  messages = List<(str, str)>();
+  
+  while true {
+    print(B + BL + "❯" + R + " ");
+    input = readLine();
+    input = trim(input);
+    
+    if input == "" { continue; }
+    if input == "/q" { break; }
+    if input == "/c" {
+      messages = List<(str, str)>();
+      println(G + "⏺ Cleared" + R);
+      continue;
+    }
+    
+    messages.add(("user", input));
+    
+    // Agent loop would go here
+    println("");
+    println(C + "⏺" + R + " I'm your Vale-powered assistant!");
+    println(D + "  Region borrowing makes me memory-safe!" + R);
+    println("");
+  }
+}

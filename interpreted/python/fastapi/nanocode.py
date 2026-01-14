@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""nanocode - minimal claude code alternative (FastAPI web UI)"""
+# pip install fastapi uvicorn && uvicorn nanocode:app
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+import os, json, subprocess, urllib.request
+
+KEY = os.environ.get("ANTHROPIC_API_KEY")
+MODEL = os.environ.get("MODEL", "claude-sonnet-4-20250514")
+messages = []
+
+tools = {
+    "read": lambda a: "\n".join(f"{i+1}| {l}" for i, l in enumerate(open(a["path"]).readlines())),
+    "write": lambda a: (open(a["path"], "w").write(a["content"]), "ok")[1],
+    "bash": lambda a: subprocess.run(a["cmd"], shell=True, capture_output=True, text=True).stdout or "done",
+}
+
+schema = [
+    {"name": "read", "description": "Read", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "write", "description": "Write", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
+    {"name": "bash", "description": "Run", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}},
+]
+
+def ask():
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages",
+        data=json.dumps({"model": MODEL, "max_tokens": 4096, "system": "Concise assistant", "messages": messages, "tools": schema}).encode(),
+        headers={"Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": KEY})
+    return json.loads(urllib.request.urlopen(req).read())
+
+app = FastAPI()
+
+class Msg(BaseModel):
+    msg: str
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return """<!DOCTYPE html><html><head><title>nanocode</title>
+<style>body{font:14px monospace;background:#0d1117;color:#c9d1d9;max-width:800px;margin:0 auto;padding:20px}
+#out{white-space:pre-wrap}form{display:flex}input{flex:1;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:8px}
+button{background:#238636;border:none;color:#fff;padding:8px 16px}</style></head>
+<body><h2>🧬 nanocode (FastAPI)</h2><div id="out"></div>
+<form onsubmit="send(event)"><input id="i" autofocus><button>→</button></form>
+<script>async function send(e){e.preventDefault();const m=i.value;i.value='';out.innerHTML+='❯ '+m+'\\n';
+const r=await(await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg:m})})).json();
+out.innerHTML+=r.map(b=>b.type==='text'?'⏺ '+b.text:'⚙ '+b.name).join('\\n')+'\\n\\n';}</script></body></html>"""
+
+@app.post("/chat")
+def chat(body: Msg):
+    global messages
+    if body.msg == "/c": messages = []; return [{"type": "text", "text": "Cleared"}]
+    messages.append({"role": "user", "content": body.msg})
+    out = []
+    while True:
+        content = ask().get("content", [])
+        for block in content:
+            if block["type"] == "text": out.append({"type": "text", "text": block["text"]})
+            if block["type"] == "tool_use":
+                out.append({"type": "tool", "name": block["name"]})
+                result = tools[block["name"]](block["input"])
+                messages.extend([{"role": "assistant", "content": content}, {"role": "user", "content": [{"type": "tool_result", "tool_use_id": block["id"], "content": result}]}])
+        if not any(b["type"] == "tool_use" for b in content): messages.append({"role": "assistant", "content": content}); break
+    return out

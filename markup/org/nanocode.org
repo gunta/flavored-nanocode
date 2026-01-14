@@ -1,0 +1,193 @@
+#+TITLE: nanocode - Org-mode Literate Edition
+#+AUTHOR: Claude AI
+#+PROPERTY: header-args :tangle nanocode.py :noweb yes
+
+* Introduction
+
+This is *nanocode* written in Org-mode's literate programming style.
+Org-mode (Emacs) supports tangling code from documents.
+
+Run with: ~org-babel-tangle~ then ~python nanocode.py~
+
+* Configuration
+
+First, we set up our imports and constants:
+
+#+begin_src python
+#!/usr/bin/env python3
+"""nanocode - minimal claude code alternative (Org-mode Literate)"""
+
+import json, os, urllib.request
+
+KEY = os.environ.get("ANTHROPIC_API_KEY")
+MODEL = os.environ.get("MODEL", "claude-sonnet-4-20250514")
+
+# ANSI colors
+R, B, D, C, G, BL = "\033[0m", "\033[1m", "\033[2m", "\033[36m", "\033[32m", "\033[34m"
+#+end_src
+
+* Tool Definitions
+
+** Read Tool
+Reads a file and returns contents with line numbers.
+
+#+begin_src python
+def read_file(path):
+    """Read file with line numbers."""
+    with open(path) as f:
+        return "\n".join(f"{i+1}| {l}" for i, l in enumerate(f.read().split("\n")))
+#+end_src
+
+** Write Tool
+Writes content to a file.
+
+#+begin_src python
+def write_file(path, content):
+    """Write content to file."""
+    with open(path, "w") as f:
+        f.write(content)
+    return "ok"
+#+end_src
+
+** Edit Tool
+Replaces text in a file.
+
+#+begin_src python
+def edit_file(path, old, new):
+    """Edit file by replacing text."""
+    with open(path) as f:
+        text = f.read()
+    if old not in text:
+        return "error: not found"
+    with open(path, "w") as f:
+        f.write(text.replace(old, new, 1))
+    return "ok"
+#+end_src
+
+** Shell Tool
+Executes a shell command.
+
+#+begin_src python
+def run_bash(cmd):
+    """Execute shell command."""
+    import subprocess
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
+#+end_src
+
+* Tool Dispatcher
+
+#+begin_src python
+tools = {
+    "read": lambda a: read_file(a["path"]),
+    "write": lambda a: write_file(a["path"], a["content"]),
+    "edit": lambda a: edit_file(a["path"], a["old"], a["new"]),
+    "bash": lambda a: run_bash(a["cmd"]),
+    "glob": lambda a: run_bash(f"find . -name '{a['pat']}' | head -50"),
+    "grep": lambda a: run_bash(f"grep -rn '{a['pat']}' . | head -50") or "none",
+}
+#+end_src
+
+* Schema Definition
+
+The tool schema for the API:
+
+#+begin_src python
+schema = [
+    {"name": "read", "description": "Read file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "write", "description": "Write file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
+    {"name": "edit", "description": "Edit file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}}, "required": ["path", "old", "new"]}},
+    {"name": "bash", "description": "Run command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}},
+    {"name": "glob", "description": "Find files", "input_schema": {"type": "object", "properties": {"pat": {"type": "string"}}, "required": ["pat"]}},
+    {"name": "grep", "description": "Search content", "input_schema": {"type": "object", "properties": {"pat": {"type": "string"}}, "required": ["pat"]}},
+]
+#+end_src
+
+* API Integration
+
+#+begin_src python
+def ask(messages):
+    """Call the Claude API."""
+    body = json.dumps({
+        "model": MODEL,
+        "max_tokens": 4096,
+        "system": "Concise assistant",
+        "messages": messages,
+        "tools": schema
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        body,
+        {"Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": KEY}
+    )
+    return json.loads(urllib.request.urlopen(req).read())
+#+end_src
+
+* Main Loop
+
+The REPL loop that processes user input:
+
+#+begin_src python
+def main():
+    print(f"{B}nanocode{R} | {D}Org-mode Literate + {MODEL}{R}\n")
+    messages = []
+    
+    while True:
+        try:
+            user_input = input(f"{B}{BL}❯{R} ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+            
+        if not user_input:
+            continue
+        if user_input in ("/q", "exit"):
+            break
+        if user_input == "/c":
+            messages = []
+            print(f"{G}⏺ Cleared{R}")
+            continue
+        
+        messages.append({"role": "user", "content": user_input})
+        
+        while True:
+            resp = ask(messages)
+            content = resp.get("content", [])
+            results = []
+            
+            for block in content:
+                if block["type"] == "text":
+                    print(f"\n{C}⏺{R} {block['text']}")
+                if block["type"] == "tool_use":
+                    print(f"\n{G}⏺ {block['name']}{R}")
+                    try:
+                        result = tools[block["name"]](block["input"])
+                    except Exception as e:
+                        result = f"error: {e}"
+                    print(f"  {D}⎿ {result.split(chr(10))[0][:60]}{R}")
+                    results.append({"type": "tool_result", "tool_use_id": block["id"], "content": result})
+            
+            messages.append({"role": "assistant", "content": content})
+            if not results:
+                break
+            messages.append({"role": "user", "content": results})
+        print()
+
+if __name__ == "__main__":
+    main()
+#+end_src
+
+* Why Org-mode for AI Agents?
+
+1. **Executable documentation** - Tangle code from prose
+2. **Emacs integration** - Full IDE in org-mode
+3. **Export formats** - PDF, HTML, LaTeX from one source
+4. **Agenda integration** - Track AI agent tasks
+5. **Babel** - Multi-language support in one document
+
+#+begin_quote
+"Org-mode is for keeping notes, maintaining TODO lists, planning projects, 
+and authoring documents with a fast and effective plain-text system."
+#+end_quote
+
+In the AI era, org-mode becomes a powerful tool for documenting
+and maintaining AI agent systems. The agent's logic and its
+explanation live together, always in sync.

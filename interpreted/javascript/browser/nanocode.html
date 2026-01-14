@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html><head>
+<title>nanocode</title>
+<style>
+:root { --bg: #0d1117; --fg: #c9d1d9; --dim: #6e7681; --cyan: #58a6ff; --green: #3fb950; }
+* { box-sizing: border-box; margin: 0; }
+body { font: 14px/1.6 'SF Mono', Consolas, monospace; background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; }
+#out { flex: 1; overflow-y: auto; padding: 20px; white-space: pre-wrap; }
+.text { color: var(--cyan); } .tool { color: var(--green); } .dim { color: var(--dim); }
+form { display: flex; padding: 10px 20px; border-top: 1px solid #30363d; }
+input { flex: 1; background: transparent; border: none; color: var(--fg); font: inherit; outline: none; }
+button { background: var(--cyan); border: none; color: var(--bg); padding: 8px 16px; cursor: pointer; border-radius: 4px; }
+</style>
+</head><body>
+<div id="out"><b>nanocode</b> <span class="dim">| browser edition | tools: read, write, edit, glob, grep, bash (simulated)</span>
+
+</div>
+<form id="f"><span style="color:var(--cyan);font-weight:bold">❯ </span><input id="i" placeholder="Enter your message..." autofocus><button>Send</button></form>
+<script>
+const KEY = localStorage.getItem('ANTHROPIC_API_KEY') || prompt('Enter Anthropic API key:');
+if (KEY) localStorage.setItem('ANTHROPIC_API_KEY', KEY);
+const API = 'https://api.anthropic.com/v1/messages';
+const MODEL = 'claude-sonnet-4-20250514';
+
+// Browser-simulated filesystem
+const fs = JSON.parse(localStorage.getItem('fs') || '{"example.txt":"Hello world!"}');
+const save = () => localStorage.setItem('fs', JSON.stringify(fs));
+
+const tools = {
+  read: (a) => { const c = fs[a.path]; return c ? c.split('\n').slice(a.offset||0,(a.offset||0)+(a.limit||1e9)).map((l,i)=>`${(a.offset||0)+i+1}| ${l}`).join('\n') : 'error: file not found'; },
+  write: (a) => (fs[a.path] = a.content, save(), 'ok'),
+  edit: (a) => { const t = fs[a.path]; if (!t) return 'error: file not found'; if (!t.includes(a.old)) return 'error: not found'; fs[a.path] = a.all ? t.replaceAll(a.old, a.new) : t.replace(a.old, a.new); save(); return 'ok'; },
+  glob: (a) => Object.keys(fs).filter(f => f.includes(a.pat.replace(/\*/g, ''))).join('\n') || 'none',
+  grep: (a) => { const re = new RegExp(a.pat); return Object.entries(fs).flatMap(([f,c]) => c.split('\n').map((l,i)=>[f,i+1,l]).filter(([,,l])=>re.test(l)).map(([f,n,l])=>`${f}:${n}:${l}`)).join('\n') || 'none'; },
+  bash: (a) => `[simulated] $ ${a.cmd}\n(browser cannot run shell commands - files: ${Object.keys(fs).join(', ')})`,
+};
+const schema = [
+  {name:'read',description:'Read file',input_schema:{type:'object',properties:{path:{type:'string'},offset:{type:'integer'},limit:{type:'integer'}},required:['path']}},
+  {name:'write',description:'Write file',input_schema:{type:'object',properties:{path:{type:'string'},content:{type:'string'}},required:['path','content']}},
+  {name:'edit',description:'Edit file',input_schema:{type:'object',properties:{path:{type:'string'},old:{type:'string'},new:{type:'string'},all:{type:'boolean'}},required:['path','old','new']}},
+  {name:'glob',description:'Find files',input_schema:{type:'object',properties:{pat:{type:'string'}},required:['pat']}},
+  {name:'grep',description:'Search files',input_schema:{type:'object',properties:{pat:{type:'string'}},required:['pat']}},
+  {name:'bash',description:'Run command',input_schema:{type:'object',properties:{cmd:{type:'string'}},required:['cmd']}},
+];
+
+const out = document.getElementById('out'), inp = document.getElementById('i');
+const log = (cls, txt) => out.innerHTML += `<span class="${cls}">${txt}</span>\n`;
+const messages = [];
+
+document.getElementById('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const input = inp.value.trim(); inp.value = '';
+  if (!input) return;
+  if (input === '/c') { messages.length = 0; log('green', '⏺ Cleared'); return; }
+  
+  log('', `<b style="color:var(--cyan)">❯</b> ${input}`);
+  messages.push({ role: 'user', content: input });
+  
+  while (1) {
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': KEY, 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: MODEL, max_tokens: 4096, system: 'Concise coding assistant. Browser sandbox filesystem.', messages, tools: schema })
+    }).then(r => r.json());
+    
+    const content = res.content || [];
+    const results = [];
+    for (const b of content) {
+      if (b.type === 'text') log('text', `⏺ ${b.text}`);
+      if (b.type === 'tool_use') {
+        log('tool', `⏺ ${b.name}(${JSON.stringify(b.input).slice(0,40)}...)`);
+        const r = tools[b.name](b.input);
+        log('dim', `  ⎿ ${r.split('\n')[0].slice(0,60)}`);
+        results.push({ type: 'tool_result', tool_use_id: b.id, content: r });
+      }
+    }
+    messages.push({ role: 'assistant', content });
+    if (!results.length) break;
+    messages.push({ role: 'user', content: results });
+  }
+  log('', '');
+  out.scrollTop = out.scrollHeight;
+};
+</script>
+</body></html>

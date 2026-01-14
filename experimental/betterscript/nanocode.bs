@@ -1,0 +1,265 @@
+// nanocode - minimal claude code alternative (BetterScript)
+// BetterScript: LLM-first language with deterministic semantics
+// Compiles to ReScript/TypeScript: https://github.com/code-agents/betterscript
+
+// --- Types ---
+
+type contentBlock =
+  | Text({text: string})
+  | ToolUse({id: string, name: string, input: Dict.t<JSON.t>})
+
+type toolResult = {
+  @as("type") type_: string,
+  tool_use_id: string,
+  content: string,
+}
+
+type message = {
+  role: string,
+  content: JSON.t,
+}
+
+type apiResponse = {
+  content: array<contentBlock>,
+}
+
+// --- Config ---
+
+let apiKey = Env.get("ANTHROPIC_API_KEY")->Option.getExn
+let model = Env.get("MODEL")->Option.getWithDefault("claude-sonnet-4-20250514")
+let apiUrl = "https://api.anthropic.com/v1/messages"
+
+// --- ANSI Colors ---
+
+let (r, b, d, c, g, bl) = ("\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[36m", "\x1b[32m", "\x1b[34m")
+
+// --- Tool Implementations ---
+
+let readFile = async (path: string) => {
+  let content = await Fs.readFile(path)
+  content
+    ->String.split("\n")
+    ->Array.mapWithIndex((line, i) => `${Int.toString(i + 1)}| ${line}`)
+    ->Array.join("\n")
+}
+
+let writeFile = async (path: string, content: string) => {
+  await Fs.writeFile(path, content)
+  "ok"
+}
+
+let editFile = async (path: string, old: string, new_: string) => {
+  let content = await Fs.readFile(path)
+  switch String.includes(content, old) {
+  | false => "error: not found"
+  | true => {
+      await Fs.writeFile(path, String.replaceAll(content, old, new_))
+      "ok"
+    }
+  }
+}
+
+let runBash = async (cmd: string) => {
+  try {
+    let result = await Process.exec("sh", ["-c", cmd], {timeout: 30_000})
+    result.stdout ++ result.stderr
+  } catch {
+  | _ => ""
+  }
+}
+
+let globFiles = async (pattern: string) => {
+  await runBash(`find . -name '${pattern}' -type f 2>/dev/null | head -50`)
+}
+
+let grepFiles = async (pattern: string) => {
+  let result = await runBash(`grep -rn '${pattern}' . 2>/dev/null | head -50`)
+  switch result {
+  | "" => "none"
+  | r => r
+  }
+}
+
+// --- Tool Execution ---
+
+let executeTool = async (name: string, input: Dict.t<JSON.t>) => {
+  let getString = key => input->Dict.get(key)->Option.flatMap(JSON.Decode.string)->Option.getWithDefault("")
+  
+  try {
+    switch name {
+    | "read" => await readFile(getString("path"))
+    | "write" => await writeFile(getString("path"), getString("content"))
+    | "edit" => await editFile(getString("path"), getString("old"), getString("new"))
+    | "bash" => await runBash(getString("cmd"))
+    | "glob" => await globFiles(getString("pat"))
+    | "grep" => await grepFiles(getString("pat"))
+    | _ => `error: unknown tool ${name}`
+    }
+  } catch {
+  | Exn.Error(e) => `error: ${Exn.message(e)->Option.getWithDefault("unknown")}`
+  }
+}
+
+// --- Tool Schema ---
+
+let toolSchema = [
+  {
+    "name": "read",
+    "description": "Read file",
+    "input_schema": {
+      "type": "object",
+      "properties": {"path": {"type": "string"}},
+      "required": ["path"],
+    },
+  },
+  {
+    "name": "write",
+    "description": "Write file",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "content": {"type": "string"},
+      },
+      "required": ["path", "content"],
+    },
+  },
+  {
+    "name": "edit",
+    "description": "Edit file",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"},
+        "old": {"type": "string"},
+        "new": {"type": "string"},
+      },
+      "required": ["path", "old", "new"],
+    },
+  },
+  {
+    "name": "bash",
+    "description": "Run command",
+    "input_schema": {
+      "type": "object",
+      "properties": {"cmd": {"type": "string"}},
+      "required": ["cmd"],
+    },
+  },
+  {
+    "name": "glob",
+    "description": "Find files",
+    "input_schema": {
+      "type": "object",
+      "properties": {"pat": {"type": "string"}},
+      "required": ["pat"],
+    },
+  },
+  {
+    "name": "grep",
+    "description": "Search files",
+    "input_schema": {
+      "type": "object",
+      "properties": {"pat": {"type": "string"}},
+      "required": ["pat"],
+    },
+  },
+]
+
+// --- API Client ---
+
+let callAnthropic = async (messages: array<message>) => {
+  let response = await Fetch.post(
+    apiUrl,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        "model": model,
+        "max_tokens": 4096,
+        "system": "Concise assistant",
+        "messages": messages,
+        "tools": toolSchema,
+      }),
+    },
+  )
+  let json = await response->Response.json
+  json->JSON.Decode.object->Option.getExn
+}
+
+// --- Response Processing ---
+
+let processResponse = async (response: apiResponse, messages: ref<array<message>>) => {
+  let results = ref([])
+
+  for block in response.content {
+    switch block {
+    | Text({text}) => Console.log(`\n${c}⏺${r} ${text}`)
+    | ToolUse({id, name, input}) => {
+        Console.log(`\n${g}⏺ ${name}${r}`)
+        let result = await executeTool(name, input)
+        let preview = result->String.split("\n")->Array.get(0)->Option.getWithDefault("")
+        Console.log(`  ${d}⎿ ${String.slice(preview, ~start=0, ~end=60)}${r}`)
+        results := Array.concat(results.contents, [{type_: "tool_result", tool_use_id: id, content: result}])
+      }
+    }
+  }
+
+  messages := Array.concat(messages.contents, [{role: "assistant", content: JSON.Encode.array(response.content)}])
+  
+  switch Array.length(results.contents) > 0 {
+  | true => {
+      messages := Array.concat(messages.contents, [{role: "user", content: JSON.Encode.array(results.contents)}])
+      true
+    }
+  | false => false
+  }
+}
+
+// --- Agent Loop ---
+
+let rec agentLoop = async (messages: ref<array<message>>) => {
+  let response = await callAnthropic(messages.contents)
+  let hasToolUse = await processResponse(response, messages)
+  
+  switch hasToolUse {
+  | true => await agentLoop(messages)
+  | false => ()
+  }
+}
+
+// --- REPL ---
+
+let rec repl = async (messages: ref<array<message>>) => {
+  let input = await Terminal.prompt(`${b}${bl}❯${r} `)
+  
+  switch String.trim(input) {
+  | "" => await repl(messages)
+  | "/q" => ()
+  | "/c" => {
+      messages := []
+      Console.log(`${g}⏺ Cleared${r}`)
+      await repl(messages)
+    }
+  | userInput => {
+      messages := Array.concat(messages.contents, [{role: "user", content: JSON.Encode.string(userInput)}])
+      await agentLoop(messages)
+      Console.log("")
+      await repl(messages)
+    }
+  }
+}
+
+// --- Main ---
+
+let main = async () => {
+  Console.log(`${b}nanocode${r} | ${d}BetterScript + ${model}${r}\n`)
+  let messages = ref([])
+  await repl(messages)
+}
+
+// Run
+main()->ignore
