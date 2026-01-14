@@ -31,6 +31,8 @@
 
 hdr:        .asciz "\033[1mnanocode\033[0m | M5 Pro Max Native\n\n"
 .p2align 4
+hdr_test:   .asciz "\033[1mnanocode\033[0m | M5 Pro Max Native \033[33m[TEST MODE: localhost:8080]\033[0m\n\n"
+.p2align 4
 pmt:        .asciz "\033[1m\033[34m❯\033[0m "
 .p2align 4
 clrmsg:     .asciz "\033[32m⏺ Cleared\033[0m\n"
@@ -46,10 +48,24 @@ host:       .asciz "api.anthropic.com"
 port:       .asciz "443"
 .p2align 4
 apikey_env: .asciz "ANTHROPIC_API_KEY"
+.p2align 4
+apiurl_env: .asciz "API_URL"
+.p2align 4
+test_host:  .asciz "localhost"
+.p2align 4
+test_port:  .asciz "8080"
 
 .p2align 4
 req1:       .ascii "POST /v1/messages HTTP/1.1\r\n"
             .ascii "Host: api.anthropic.com\r\n"
+            .ascii "Content-Type: application/json\r\n"
+            .ascii "anthropic-version: 2023-06-01\r\n"
+            .ascii "x-api-key: "
+            .byte 0
+// Test mode request (plain HTTP to localhost)
+.p2align 4
+req1_test:  .ascii "POST /v1/messages HTTP/1.1\r\n"
+            .ascii "Host: localhost:8080\r\n"
             .ascii "Content-Type: application/json\r\n"
             .ascii "anthropic-version: 2023-06-01\r\n"
             .ascii "x-api-key: "
@@ -100,6 +116,8 @@ sslctx:     .skip 8             // SSL context ptr
 apikey:     .skip 256           // API key
 .p2align 3
 flags:      .skip 8             // bit0=key, bit1=addr, bit2=conn
+.p2align 3
+testmode:   .skip 8             // 1 = test mode (plain HTTP), 0 = production (SSL)
 .p2align 3
 addrres:    .skip 8             // getaddrinfo result
 .p2align 7
@@ -634,6 +652,7 @@ free_addr:
 
 //=============================================================================
 // MAIN API CALL FUNCTION (Heavily optimized)
+// Supports both SSL (production) and plain HTTP (test mode)
 //=============================================================================
 call_api:
     // Large frame for local data - aligned to cache line
@@ -643,6 +662,11 @@ call_api:
     stp     x21, x22, [sp, #32]
     stp     x23, x24, [sp, #48]
     stp     x25, x26, [sp, #64]
+
+    //--- Check test mode flag ---
+    adrp    x9, testmode@PAGE
+    add     x9, x9, testmode@PAGEOFF
+    ldr     x25, [x9]           // x25 = testmode flag (preserved across calls)
 
     //--- Get API key (with prefetch) ---
     adrp    x0, apikey_env@PAGE
@@ -689,8 +713,15 @@ call_api:
     prfm    pstl1strm, [x0, #128]
     prfm    pstl1strm, [x0, #192]
     
+    // Select request header based on mode (test vs production)
+    cbnz    x25, .Luse_test_req
     adrp    x1, req1@PAGE
     add     x1, x1, req1@PAGEOFF
+    b       .Lcopy_req1
+.Luse_test_req:
+    adrp    x1, req1_test@PAGE
+    add     x1, x1, req1_test@PAGEOFF
+.Lcopy_req1:
     bl      strcpy_simd
     
     adrp    x1, apikey@PAGE
@@ -734,10 +765,19 @@ call_api:
     mov     w1, #SOCK_STREAM
     str     w1, [x9, #8]
 
+    // Select host/port based on mode
+    cbnz    x25, .Luse_test_host
     adrp    x0, host@PAGE
     add     x0, x0, host@PAGEOFF
     adrp    x1, port@PAGE
     add     x1, x1, port@PAGEOFF
+    b       .Ldo_dns
+.Luse_test_host:
+    adrp    x0, test_host@PAGE
+    add     x0, x0, test_host@PAGEOFF
+    adrp    x1, test_port@PAGE
+    add     x1, x1, test_port@PAGEOFF
+.Ldo_dns:
     mov     x2, x9
     adrp    x3, addrres@PAGE
     add     x3, x3, addrres@PAGEOFF
@@ -769,6 +809,10 @@ call_api:
     svc     #0x80
     tbnz    x0, #63, .Lapi_close
 
+    // Branch based on mode: test = plain HTTP, production = SSL
+    cbnz    x25, .Ltest_mode_send
+
+    //=== PRODUCTION MODE: SSL Connection ===
     //--- SSL Setup ---
     mov     x0, #1              // kSSLClientSide
     mov     x1, #0              // kSSLStreamType
@@ -801,7 +845,7 @@ call_api:
     bl      _SSLHandshake
     cbnz    x0, .Lapi_ssl_close
 
-    //--- Send request ---
+    //--- Send request (SSL) ---
     adrp    x9, req@PAGE
     add     x9, x9, req@PAGEOFF
     sub     x19, x21, x9
@@ -817,7 +861,7 @@ call_api:
     add     x0, x0, cyn@PAGEOFF
     bl      puts_fast
 
-    //--- Read response with prefetch ---
+    //--- Read response with prefetch (SSL) ---
     adrp    x9, resp@PAGE
     add     x9, x9, resp@PAGEOFF
     mov     x19, #0
@@ -868,6 +912,75 @@ call_api:
     bl      _SSLClose
     mov     x0, x23
     bl      _CFRelease
+    b       .Lapi_close
+
+    //=== TEST MODE: Plain HTTP (no SSL) ===
+.Ltest_mode_send:
+    //--- Send request (plain TCP) ---
+    adrp    x9, req@PAGE
+    add     x9, x9, req@PAGEOFF
+    sub     x19, x21, x9        // Request length
+    
+    mov     x0, x22             // Socket fd
+    mov     x1, x9              // Request buffer
+    mov     x2, x19             // Request length
+    mov     x16, #SYS_WRITE
+    svc     #0x80
+    tbnz    x0, #63, .Lapi_close
+
+    //--- Print response marker ---
+    adrp    x0, cyn@PAGE
+    add     x0, x0, cyn@PAGEOFF
+    bl      puts_fast
+
+    //--- Read response (plain TCP) ---
+    adrp    x9, resp@PAGE
+    add     x9, x9, resp@PAGEOFF
+    mov     x19, #0
+    movz    x26, #0x2, lsl #16  // RESP_MAX = 0x20000
+    sub     x26, x26, #1        // RESP_MAX - 1
+    
+    // Prefetch response buffer
+    prfm    pstl1strm, [x9]
+    prfm    pstl1strm, [x9, #64]
+    prfm    pstl1strm, [x9, #128]
+    
+.Ltest_read_loop:
+    mov     x0, x22             // Socket fd
+    add     x1, x9, x19         // Buffer + offset
+    // Clamp read size to remaining buffer capacity
+    subs    x10, x26, x19
+    b.le    .Ltest_read_done
+    mov     x2, #8192           // Larger reads for efficiency
+    cmp     x10, x2
+    csel    x2, x10, x2, lt
+    mov     x16, #SYS_READ
+    svc     #0x80
+    
+    // Check for error or EOF
+    cmp     x0, #0
+    b.le    .Ltest_read_done
+    
+    add     x19, x19, x0
+    
+    // Prefetch next chunk
+    add     x10, x9, x19
+    prfm    pstl1strm, [x10]
+    prfm    pstl1strm, [x10, #64]
+    
+    b       .Ltest_read_loop
+
+.Ltest_read_done:
+    adrp    x9, resp@PAGE
+    add     x9, x9, resp@PAGEOFF
+    strb    wzr, [x9, x19]
+    
+    bl      find_text_simd
+    
+    adrp    x0, nl@PAGE
+    add     x0, x0, nl@PAGEOFF
+    bl      puts_fast
+    // Fall through to close
 
 .Lapi_close:
     adrp    x9, sockfd@PAGE
@@ -904,8 +1017,28 @@ _main:
     stp     x29, x30, [sp, #-16]!
     mov     x29, sp
     
+    //--- Check API_URL env for test mode ---
+    adrp    x0, apiurl_env@PAGE
+    add     x0, x0, apiurl_env@PAGEOFF
+    bl      _getenv
+    
+    adrp    x9, testmode@PAGE
+    add     x9, x9, testmode@PAGEOFF
+    
+    // If API_URL is set, enable test mode
+    cmp     x0, #0
+    cset    x10, ne             // x10 = 1 if API_URL is set, 0 otherwise
+    str     x10, [x9]
+    
+    // Print appropriate header based on mode
+    cbz     x10, .Lprint_prod_hdr
+    adrp    x0, hdr_test@PAGE
+    add     x0, x0, hdr_test@PAGEOFF
+    b       .Lprint_hdr
+.Lprint_prod_hdr:
     adrp    x0, hdr@PAGE
     add     x0, x0, hdr@PAGEOFF
+.Lprint_hdr:
     bl      puts_fast
 
 .Lmain_loop:
@@ -976,6 +1109,12 @@ _main:
 // 6. ARMv8.5+ Features
 //    - BTI/PAC compatible structure
 //    - Optimized for 8-wide decode
+//
+// 7. Test Mode (API_URL override)
+//    - Set API_URL env var to enable test mode
+//    - Uses plain HTTP to localhost:8080 (no SSL)
+//    - Production mode uses HTTPS to api.anthropic.com:443
+//    - Example: API_URL=http://localhost:8080 ./nanocode
 //
 // NOTE: ANE (Apple Neural Engine) and AMX require CoreML/Accelerate
 // frameworks and are not directly accessible from assembly.

@@ -1,63 +1,273 @@
 #!/usr/bin/env python3
-"""nanocode - minimal claude code alternative (~150 lines, zero deps)"""
-import glob as G, json, os, re, subprocess, urllib.request
+"""nanocode - minimal claude code alternative"""
 
-KEY = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
-API = "https://openrouter.ai/api/v1/messages" if os.environ.get("OPENROUTER_API_KEY") else "https://api.anthropic.com/v1/messages"
-MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4" if os.environ.get("OPENROUTER_API_KEY") else "claude-sonnet-4-20250514")
-R, B, D, C, GR, BL = "\033[0m", "\033[1m", "\033[2m", "\033[36m", "\033[32m", "\033[34m"
+import glob as globlib, json, os, re, subprocess, urllib.request
 
-tools = {
-    "read": lambda a: "\n".join(f"{i+1}| {l}" for i, l in enumerate(open(a["path"]).read().split("\n")[a.get("offset", 0):a.get("offset", 0) + a.get("limit", 9999)])),
-    "write": lambda a: (open(a["path"], "w").write(a["content"]), "ok")[1],
-    "edit": lambda a: (lambda t: "error: not found" if a["old"] not in t else (f"error: {t.count(a['old'])}x, use all=true" if not a.get("all") and t.count(a["old"]) > 1 else (open(a["path"], "w").write(t.replace(a["old"], a["new"]) if a.get("all") else t.replace(a["old"], a["new"], 1)), "ok")[1]))(open(a["path"]).read()),
-    "glob": lambda a: "\n".join(sorted(G.glob((a.get("path", ".") + "/" + a["pat"]).replace("//", "/"), recursive=True), key=lambda f: os.path.getmtime(f) if os.path.isfile(f) else 0, reverse=True)[:50]) or "none",
-    "grep": lambda a: "\n".join(f"{f}:{n}:{l.rstrip()}" for f in G.glob(a.get("path", ".") + "/**", recursive=True) for n, l in enumerate(open(f, errors="ignore"), 1) if re.search(a["pat"], l))[:50] or "none",
-    "bash": lambda a: subprocess.run(a["cmd"], shell=True, capture_output=True, text=True, timeout=30).stdout or subprocess.run(a["cmd"], shell=True, capture_output=True, text=True).stderr or "(empty)",
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
+_DEFAULT_URL = "https://openrouter.ai/api/v1/messages" if OPENROUTER_KEY else "https://api.anthropic.com/v1/messages"
+API_URL = os.environ.get("API_URL", _DEFAULT_URL)
+MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4.5" if OPENROUTER_KEY else "claude-opus-4-5")
+
+# ANSI colors
+RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
+BLUE, CYAN, GREEN, YELLOW, RED = (
+    "\033[34m",
+    "\033[36m",
+    "\033[32m",
+    "\033[33m",
+    "\033[31m",
+)
+
+
+# --- Tool implementations ---
+
+
+def read(args):
+    lines = open(args["path"]).readlines()
+    offset = args.get("offset", 0)
+    limit = args.get("limit", len(lines))
+    selected = lines[offset : offset + limit]
+    return "".join(f"{offset + idx + 1:4}| {line}" for idx, line in enumerate(selected))
+
+
+def write(args):
+    with open(args["path"], "w") as f:
+        f.write(args["content"])
+    return "ok"
+
+
+def edit(args):
+    text = open(args["path"]).read()
+    old, new = args["old"], args["new"]
+    if old not in text:
+        return "error: old_string not found"
+    count = text.count(old)
+    if not args.get("all") and count > 1:
+        return f"error: old_string appears {count} times, must be unique (use all=true)"
+    replacement = (
+        text.replace(old, new) if args.get("all") else text.replace(old, new, 1)
+    )
+    with open(args["path"], "w") as f:
+        f.write(replacement)
+    return "ok"
+
+
+def glob(args):
+    pattern = (args.get("path", ".") + "/" + args["pat"]).replace("//", "/")
+    files = globlib.glob(pattern, recursive=True)
+    files = sorted(
+        files,
+        key=lambda f: os.path.getmtime(f) if os.path.isfile(f) else 0,
+        reverse=True,
+    )
+    return "\n".join(files) or "none"
+
+
+def grep(args):
+    pattern = re.compile(args["pat"])
+    hits = []
+    for filepath in globlib.glob(args.get("path", ".") + "/**", recursive=True):
+        try:
+            for line_num, line in enumerate(open(filepath), 1):
+                if pattern.search(line):
+                    hits.append(f"{filepath}:{line_num}:{line.rstrip()}")
+        except Exception:
+            pass
+    return "\n".join(hits[:50]) or "none"
+
+
+def bash(args):
+    proc = subprocess.Popen(
+        args["cmd"], shell=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True
+    )
+    output_lines = []
+    try:
+        while True:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            if line:
+                print(f"  {DIM}│ {line.rstrip()}{RESET}", flush=True)
+                output_lines.append(line)
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        output_lines.append("\n(timed out after 30s)")
+    return "".join(output_lines).strip() or "(empty)"
+
+
+# --- Tool definitions: (description, schema, function) ---
+
+TOOLS = {
+    "read": (
+        "Read file with line numbers (file path, not directory)",
+        {"path": "string", "offset": "number?", "limit": "number?"},
+        read,
+    ),
+    "write": (
+        "Write content to file",
+        {"path": "string", "content": "string"},
+        write,
+    ),
+    "edit": (
+        "Replace old with new in file (old must be unique unless all=true)",
+        {"path": "string", "old": "string", "new": "string", "all": "boolean?"},
+        edit,
+    ),
+    "glob": (
+        "Find files by pattern, sorted by mtime",
+        {"pat": "string", "path": "string?"},
+        glob,
+    ),
+    "grep": (
+        "Search files for regex pattern",
+        {"pat": "string", "path": "string?"},
+        grep,
+    ),
+    "bash": (
+        "Run shell command",
+        {"cmd": "string"},
+        bash,
+    ),
 }
 
-schema = [
-    {"name": "read", "description": "Read file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["path"]}},
-    {"name": "write", "description": "Write file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
-    {"name": "edit", "description": "Edit file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}, "all": {"type": "boolean"}}, "required": ["path", "old", "new"]}},
-    {"name": "glob", "description": "Find files", "input_schema": {"type": "object", "properties": {"pat": {"type": "string"}, "path": {"type": "string"}}, "required": ["pat"]}},
-    {"name": "grep", "description": "Search files", "input_schema": {"type": "object", "properties": {"pat": {"type": "string"}, "path": {"type": "string"}}, "required": ["pat"]}},
-    {"name": "bash", "description": "Run command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}},
-]
 
-def ask(messages):
-    req = urllib.request.Request(API, json.dumps({"model": MODEL, "max_tokens": 8192, "system": f"Concise coding assistant. cwd: {os.getcwd()}", "messages": messages, "tools": schema}).encode(),
-        {"Content-Type": "application/json", "anthropic-version": "2023-06-01", **({"Authorization": f"Bearer {KEY}"} if os.environ.get("OPENROUTER_API_KEY") else {"x-api-key": KEY})})
-    return json.loads(urllib.request.urlopen(req).read())
+def run_tool(name, args):
+    try:
+        return TOOLS[name][2](args)
+    except Exception as err:
+        return f"error: {err}"
+
+
+def make_schema():
+    result = []
+    for name, (description, params, _fn) in TOOLS.items():
+        properties = {}
+        required = []
+        for param_name, param_type in params.items():
+            is_optional = param_type.endswith("?")
+            base_type = param_type.rstrip("?")
+            properties[param_name] = {
+                "type": "integer" if base_type == "number" else base_type
+            }
+            if not is_optional:
+                required.append(param_name)
+        result.append(
+            {
+                "name": name,
+                "description": description,
+                "input_schema": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            }
+        )
+    return result
+
+
+def call_api(messages, system_prompt):
+    request = urllib.request.Request(
+        API_URL,
+        data=json.dumps(
+            {
+                "model": MODEL,
+                "max_tokens": 8192,
+                "system": system_prompt,
+                "messages": messages,
+                "tools": make_schema(),
+            }
+        ).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+            **({"Authorization": f"Bearer {OPENROUTER_KEY}"} if OPENROUTER_KEY else {"x-api-key": os.environ.get("ANTHROPIC_API_KEY", "")}),
+        },
+    )
+    response = urllib.request.urlopen(request)
+    return json.loads(response.read())
+
+
+def separator():
+    return f"{DIM}{'─' * min(os.get_terminal_size().columns, 80)}{RESET}"
+
+
+def render_markdown(text):
+    return re.sub(r"\*\*(.+?)\*\*", f"{BOLD}\\1{RESET}", text)
+
 
 def main():
-    print(f"{B}nanocode{R} | {D}{MODEL} | {os.getcwd()}{R}\n")
+    api_info = API_URL if API_URL != _DEFAULT_URL else ('OpenRouter' if OPENROUTER_KEY else 'Anthropic')
+    print(f"{BOLD}nanocode{RESET} | {DIM}{MODEL} ({api_info}) | {os.getcwd()}{RESET}\n")
     messages = []
+    system_prompt = f"Concise coding assistant. cwd: {os.getcwd()}"
+
     while True:
         try:
-            user_input = input(f"{B}{BL}❯{R} ").strip()
-            if not user_input: continue
-            if user_input in ("/q", "exit"): break
-            if user_input == "/c": messages = []; print(f"{GR}⏺ Cleared{R}"); continue
+            print(separator())
+            user_input = input(f"{BOLD}{BLUE}❯{RESET} ").strip()
+            print(separator())
+            if not user_input:
+                continue
+            if user_input in ("/q", "exit"):
+                break
+            if user_input == "/c":
+                messages = []
+                print(f"{GREEN}⏺ Cleared conversation{RESET}")
+                continue
 
             messages.append({"role": "user", "content": user_input})
-            while True:
-                resp = ask(messages)
-                content = resp.get("content", [])
-                results = []
-                for block in content:
-                    if block["type"] == "text": print(f"\n{C}⏺{R} {block['text']}")
-                    if block["type"] == "tool_use":
-                        print(f"\n{GR}⏺ {block['name']}{R}({D}{str(list(block['input'].values())[0])[:50]}{R})")
-                        try: result = tools[block["name"]](block["input"])
-                        except Exception as e: result = f"error: {e}"
-                        print(f"  {D}⎿ {result.split(chr(10))[0][:60]}{R}")
-                        results.append({"type": "tool_result", "tool_use_id": block["id"], "content": result})
-                messages.append({"role": "assistant", "content": content})
-                if not results: break
-                messages.append({"role": "user", "content": results})
-            print()
-        except (KeyboardInterrupt, EOFError): break
-        except Exception as e: print(f"\033[31m⏺ Error: {e}{R}")
 
-if __name__ == "__main__": main()
+            # agentic loop: keep calling API until no more tool calls
+            while True:
+                response = call_api(messages, system_prompt)
+                content_blocks = response.get("content", [])
+                tool_results = []
+
+                for block in content_blocks:
+                    if block["type"] == "text":
+                        print(f"\n{CYAN}⏺{RESET} {render_markdown(block['text'])}")
+
+                    if block["type"] == "tool_use":
+                        tool_name = block["name"]
+                        tool_args = block["input"]
+                        arg_preview = str(list(tool_args.values())[0])[:50]
+                        print(
+                            f"\n{GREEN}⏺ {tool_name.capitalize()}{RESET}({DIM}{arg_preview}{RESET})"
+                        )
+
+                        result = run_tool(tool_name, tool_args)
+                        result_lines = result.split("\n")
+                        preview = result_lines[0][:60]
+                        if len(result_lines) > 1:
+                            preview += f" ... +{len(result_lines) - 1} lines"
+                        elif len(result_lines[0]) > 60:
+                            preview += "..."
+                        print(f"  {DIM}⎿  {preview}{RESET}")
+
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block["id"],
+                                "content": result,
+                            }
+                        )
+
+                messages.append({"role": "assistant", "content": content_blocks})
+
+                if not tool_results:
+                    break
+                messages.append({"role": "user", "content": tool_results})
+
+            print()
+
+        except (KeyboardInterrupt, EOFError):
+            break
+        except Exception as err:
+            print(f"{RED}⏺ Error: {err}{RESET}")
+
+
+if __name__ == "__main__":
+    main()
