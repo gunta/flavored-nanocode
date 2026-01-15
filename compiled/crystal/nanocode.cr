@@ -5,7 +5,13 @@ require "json"
 
 KEY = ENV["ANTHROPIC_API_KEY"]
 MODEL = ENV["MODEL"]? || "claude-sonnet-4-20250514"
-R, B, D, C, G, BL = "\e[0m", "\e[1m", "\e[2m", "\e[36m", "\e[32m", "\e[34m"
+API_URL = ENV["API_URL"]? || "https://api.anthropic.com/v1/messages"
+R = "\e[0m"
+B = "\e[1m"
+D = "\e[2m"
+C = "\e[36m"
+G = "\e[32m"
+BL = "\e[34m"
 
 def tool(name : String, input : JSON::Any) : String
   case name
@@ -32,10 +38,11 @@ SCHEMA = JSON.parse(%([{"name":"read","description":"Read","input_schema":{"type
 {"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]))
 
 def ask(messages)
-  client = HTTP::Client.new("api.anthropic.com", tls: true)
+  uri = URI.parse(API_URL)
+  client = HTTP::Client.new(uri.host.not_nil!, port: uri.port, tls: uri.scheme == "https")
   client.before_request { |r| r.headers["Content-Type"] = "application/json"; r.headers["anthropic-version"] = "2023-06-01"; r.headers["x-api-key"] = KEY }
   body = {"model" => MODEL, "max_tokens" => 4096, "system" => "Concise assistant", "messages" => messages, "tools" => SCHEMA}.to_json
-  JSON.parse(client.post("/v1/messages", body: body).body)
+  JSON.parse(client.post(uri.path.not_nil!, body: body).body)
 end
 
 puts "#{B}nanocode#{R} | #{D}#{MODEL}#{R}\n"
@@ -44,8 +51,7 @@ messages = [] of JSON::Any
 loop do
   print "#{B}#{BL}❯#{R} "
   input = gets.try(&.strip) || break
-  next if input.empty?
-  break if input == "/q"
+  break if input.empty? || input == "/q"
   (messages = [] of JSON::Any; puts "#{G}⏺ Cleared#{R}"; next) if input == "/c"
 
   messages << JSON.parse({"role" => "user", "content" => input}.to_json)

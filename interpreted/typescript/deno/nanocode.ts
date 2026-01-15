@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run -A
 // nanocode - minimal claude code alternative (Deno)
 const KEY = Deno.env.get("OPENROUTER_API_KEY") || Deno.env.get("ANTHROPIC_API_KEY");
-const API = Deno.env.get("OPENROUTER_API_KEY") ? "https://openrouter.ai/api/v1/messages" : "https://api.anthropic.com/v1/messages";
+const API = Deno.env.get("API_URL") || (Deno.env.get("OPENROUTER_API_KEY") ? "https://openrouter.ai/api/v1/messages" : "https://api.anthropic.com/v1/messages");
 const MODEL = Deno.env.get("MODEL") || (Deno.env.get("OPENROUTER_API_KEY") ? "anthropic/claude-opus-4" : "claude-sonnet-4-20250514");
 const [R, B, D, C, G] = ["\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[36m", "\x1b[32m"];
 

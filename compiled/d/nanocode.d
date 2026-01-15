@@ -13,8 +13,31 @@ string KEY, MODEL;
 
 string tool(string name, Json input) {
     try switch (name) {
-        case "read": return readText(input["path"].get!string).split("\n").enumerate.map!(t => format("%d| %s", t[0]+1, t[1])).join("\n");
+        case "read": {
+            auto off = input.get("offset", Json(0)).get!int;
+            auto lim = input.get("limit", Json(int.max)).get!int;
+            return readText(input["path"].get!string)
+                .split("\n")
+                .drop(off)
+                .take(lim)
+                .enumerate
+                .map!(t => format("%d| %s", off + t[0] + 1, t[1]))
+                .join("\n");
+        }
         case "write": std.file.write(input["path"].get!string, input["content"].get!string); return "ok";
+        case "edit": {
+            auto path = input["path"].get!string;
+            auto old = input["old"].get!string;
+            auto rep = input["new"].get!string;
+            auto all = input.get("all", Json(false)).get!bool;
+            auto txt = readText(path);
+            auto count = txt.count(old);
+            if (count == 0) return "error: old_string not found";
+            if (count > 1 && !all) return format("error: old_string appears %s times, use all=true", count);
+            auto updated = all ? txt.replace(old, rep) : txt.replaceFirst(old, rep);
+            std.file.write(path, updated);
+            return "ok";
+        }
         case "bash": return executeShell(input["cmd"].get!string).output;
         case "glob": return executeShell("find . -name '" ~ input["pat"].get!string ~ "' | head -50").output;
         case "grep": return executeShell("grep -rn '" ~ input["pat"].get!string ~ "' . | head -50").output;
@@ -23,7 +46,14 @@ string tool(string name, Json input) {
 }
 
 Json ask(Json[] messages) {
-    auto schema = parseJsonString(`[{"name":"read","description":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},{"name":"write","description":"Write","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},{"name":"glob","description":"Find","input_schema":{"type":"object","properties":{"pat":{"type":"string"}},"required":["pat"]}},{"name":"grep","description":"Search","input_schema":{"type":"object","properties":{"pat":{"type":"string"}},"required":["pat"]}}]`);
+    auto schema = parseJsonString(`[
+      {"name":"read","description":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
+      {"name":"write","description":"Write","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
+      {"name":"edit","description":"Replace","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
+      {"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+      {"name":"glob","description":"Find","input_schema":{"type":"object","properties":{"pat":{"type":"string"}},"required":["pat"]}},
+      {"name":"grep","description":"Search","input_schema":{"type":"object","properties":{"pat":{"type":"string"}},"required":["pat"]}}
+    ]`);
     auto body = Json(["model": Json(MODEL), "max_tokens": Json(4096), "system": Json("Concise assistant"), "messages": Json(messages), "tools": schema]);
     Json result;
     requestHTTP("https://api.anthropic.com/v1/messages",

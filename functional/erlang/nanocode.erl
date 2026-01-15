@@ -3,8 +3,12 @@
 -mode(compile).
 
 main(_) ->
-    KEY = os:getenv("ANTHROPIC_API_KEY"),
-    MODEL = case os:getenv("MODEL") of false -> "claude-sonnet-4-20250514"; M -> M end,
+    OR = os:getenv("OPENROUTER_API_KEY"),
+    KEY = case OR of false -> os:getenv("ANTHROPIC_API_KEY"); _ -> OR end,
+    MODEL = case os:getenv("MODEL") of
+        false -> case OR of false -> "claude-opus-4-5"; _ -> "anthropic/claude-opus-4-5" end;
+        M -> M
+    end,
     io:format("\e[1mnanocode\e[0m | \e[2m~s\e[0m~n~n", [MODEL]),
     inets:start(), ssl:start(),
     loop(KEY, MODEL, []).
@@ -47,21 +51,59 @@ agent_loop(KEY, MODEL, Msgs) ->
 
 tool(<<"read">>, Input) ->
     Path = binary_to_list(maps:get(<<"path">>, Input)),
+    Offset = maps:get(<<"offset">>, Input, 0),
+    Limit = maps:get(<<"limit">>, Input, 0),
     case file:read_file(Path) of
-        {ok, Data} -> lists:flatten([io_lib:format("~b| ~s~n", [I, L]) || {I, L} <- lists:zip(lists:seq(1, length(Lines)), Lines = string:split(binary_to_list(Data), "\n", all))]);
+        {ok, Data} ->
+            Lines0 = string:split(binary_to_list(Data), "\n", all),
+            LinesIdx = lists:zip(Lines0, lists:seq(1, length(Lines0))),
+            Lines = lists:dropwhile(fun({_, I}) -> I =< Offset end, LinesIdx),
+            LinesLim = case Limit of 0 -> Lines; _ -> lists:sublist(Lines, Limit) end,
+            lists:flatten([io_lib:format("~b| ~s~n", [I, L]) || {L, I} <- LinesLim]);
+        _ -> "error"
+    end;
+tool(<<"write">>, Input) ->
+    Path = maps:get(<<"path">>, Input),
+    Content = maps:get(<<"content">>, Input),
+    file:write_file(Path, Content), "ok";
+tool(<<"edit">>, Input) ->
+    Path = maps:get(<<"path">>, Input),
+    Old = maps:get(<<"old">>, Input),
+    New = maps:get(<<"new">>, Input),
+    All = maps:get(<<"all">>, Input, false),
+    case file:read_file(Path) of
+        {ok, Data} ->
+            Parts = binary:split(Data, Old, [global]),
+            Count = length(Parts) - 1,
+            case Count of
+                0 -> "error: old_string not found";
+                _ when Count > 1, All =/= true -> lists:flatten(io_lib:format("error: old_string appears ~p times, use all=true", [Count]));
+                _ ->
+                    NewData = binary:replace(Data, Old, New, (if All -> [global]; true -> [] end)),
+                    file:write_file(Path, NewData), "ok"
+            end;
         _ -> "error"
     end;
 tool(<<"bash">>, Input) ->
     os:cmd(binary_to_list(maps:get(<<"cmd">>, Input)));
 tool(<<"glob">>, Input) ->
-    os:cmd("find . -name '" ++ binary_to_list(maps:get(<<"pat">>, Input)) ++ "' | head -50");
+    Base = binary_to_list(maps:get(<<"path">>, Input, <<".">>)),
+    os:cmd("find " ++ Base ++ " -name '" ++ binary_to_list(maps:get(<<"pat">>, Input)) ++ "' | head -50");
 tool(<<"grep">>, Input) ->
-    os:cmd("grep -rn '" ++ binary_to_list(maps:get(<<"pat">>, Input)) ++ "' . | head -50");
+    Base = binary_to_list(maps:get(<<"path">>, Input, <<".">>)),
+    os:cmd("grep -rn '" ++ binary_to_list(maps:get(<<"pat">>, Input)) ++ "' " ++ Base ++ " 2>/dev/null | head -50");
 tool(_, _) -> "unknown".
 
 ask(KEY, MODEL, Msgs) ->
-    Schema = <<"[{\"name\":\"read\",\"description\":\"Read\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},{\"name\":\"bash\",\"description\":\"Run\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]}},{\"name\":\"glob\",\"description\":\"Find\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"}},\"required\":[\"pat\"]}},{\"name\":\"grep\",\"description\":\"Search\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"}},\"required\":[\"pat\"]}}]">>,
-    Body = jsx:encode(#{<<"model">> => list_to_binary(MODEL), <<"max_tokens">> => 4096, <<"system">> => <<"Concise assistant">>, <<"messages">> => Msgs, <<"tools">> => jsx:decode(Schema)}),
-    Headers = [{"Content-Type", "application/json"}, {"anthropic-version", "2023-06-01"}, {"x-api-key", KEY}],
-    {ok, {{_, 200, _}, _, RespBody}} = httpc:request(post, {"https://api.anthropic.com/v1/messages", Headers, "application/json", Body}, [], []),
+    Schema = <<"[{\"name\":\"read\",\"description\":\"Read\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"},\"limit\":{\"type\":\"integer\"}},\"required\":[\"path\"]}},"
+                "{\"name\":\"write\",\"description\":\"Write\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},"
+                "{\"name\":\"edit\",\"description\":\"Replace\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"old\":{\"type\":\"string\"},\"new\":{\"type\":\"string\"},\"all\":{\"type\":\"boolean\"}},\"required\":[\"path\",\"old\",\"new\"]}},"
+                "{\"name\":\"bash\",\"description\":\"Run\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]}},"
+                "{\"name\":\"glob\",\"description\":\"Find\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"pat\"]}},"
+                "{\"name\":\"grep\",\"description\":\"Search\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"pat\"]}}]">>,
+    Body = jsx:encode(#{<<"model">> => list_to_binary(MODEL), <<"max_tokens">> => 8192, <<"system">> => <<"Concise assistant">>, <<"messages">> => Msgs, <<"tools">> => jsx:decode(Schema)}),
+    Api = case os:getenv("OPENROUTER_API_KEY") of false -> "https://api.anthropic.com/v1/messages"; _ -> "https://openrouter.ai/api/v1/messages" end,
+    AuthHeader = case os:getenv("OPENROUTER_API_KEY") of false -> {"x-api-key", KEY}; _ -> {"Authorization", "Bearer " ++ KEY} end,
+    Headers = [{"Content-Type", "application/json"}, {"anthropic-version", "2023-06-01"}, AuthHeader],
+    {ok, {{_, 200, _}, _, RespBody}} = httpc:request(post, {Api, Headers, "application/json", Body}, [], []),
     jsx:decode(list_to_binary(RespBody), [return_maps]).

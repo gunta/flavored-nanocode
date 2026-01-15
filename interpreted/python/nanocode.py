@@ -191,7 +191,11 @@ def call_api(messages, system_prompt):
 
 
 def separator():
-    return f"{DIM}{'─' * min(os.get_terminal_size().columns, 80)}{RESET}"
+    try:
+        width = min(os.get_terminal_size().columns, 80)
+    except OSError:
+        width = 80
+    return f"{DIM}{'─' * width}{RESET}"
 
 
 def render_markdown(text):

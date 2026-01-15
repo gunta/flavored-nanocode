@@ -4,7 +4,14 @@ import std/[httpclient, json, os, osproc, strutils, sequtils, terminal]
 
 let KEY = getEnv("ANTHROPIC_API_KEY")
 let MODEL = getEnv("MODEL", "claude-sonnet-4-20250514")
-const R = "\e[0m"; B = "\e[1m"; D = "\e[2m"; C = "\e[36m"; G = "\e[32m"; BL = "\e[34m"
+let API_URL = getEnv("API_URL", "https://api.anthropic.com/v1/messages")
+const
+  R = "\e[0m"
+  B = "\e[1m"
+  D = "\e[2m"
+  C = "\e[36m"
+  G = "\e[32m"
+  BL = "\e[34m"
 
 proc tool(name: string, input: JsonNode): string =
   case name
@@ -32,16 +39,19 @@ proc ask(messages: JsonNode): JsonNode =
   let client = newHttpClient()
   client.headers = newHttpHeaders({"Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": KEY})
   let body = %*{"model": MODEL, "max_tokens": 4096, "system": "Concise assistant", "messages": messages, "tools": schema}
-  parseJson(client.postContent("https://api.anthropic.com/v1/messages", $body))
+  parseJson(client.postContent(API_URL, $body))
 
 echo B, "nanocode", R, " | ", D, MODEL, R, "\n"
 var messages = newJArray()
 
 while true:
   stdout.write B, BL, "❯", R, " "; stdout.flushFile
-  let input = stdin.readLine.strip
-  if input == "": continue
-  if input == "/q": break
+  var input: string
+  try:
+    input = stdin.readLine.strip
+  except IOError:
+    break
+  if input == "" or input == "/q": break
   if input == "/c": messages = newJArray(); echo G, "⏺ Cleared", R; continue
   
   messages.add(%*{"role": "user", "content": input})
@@ -51,14 +61,14 @@ while true:
     let content = resp["content"]
     var results = newJArray()
     
-    for block in content:
-      if block["type"].getStr == "text": echo "\n", C, "⏺", R, " ", block["text"].getStr
-      if block["type"].getStr == "tool_use":
-        let name = block["name"].getStr
+    for blk in content:
+      if blk["type"].getStr == "text": echo "\n", C, "⏺", R, " ", blk["text"].getStr
+      if blk["type"].getStr == "tool_use":
+        let name = blk["name"].getStr
         echo "\n", G, "⏺ ", name, R
-        let result = tool(name, block["input"])
+        let result = tool(name, blk["input"])
         echo "  ", D, "⎿ ", result.splitLines[0], R
-        results.add(%*{"type": "tool_result", "tool_use_id": block["id"], "content": result})
+        results.add(%*{"type": "tool_result", "tool_use_id": blk["id"], "content": result})
     
     messages.add(%*{"role": "assistant", "content": content})
     if results.len == 0: break

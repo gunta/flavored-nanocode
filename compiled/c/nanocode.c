@@ -12,7 +12,7 @@
 #define G "\033[32m"
 #define BL "\033[34m"
 
-char *KEY, *MODEL;
+char *KEY, *MODEL, *API_URL;
 char msgs[65536] = "[]";
 
 typedef struct { char *data; size_t len; } Buf;
@@ -39,6 +39,15 @@ char *run_tool(const char *name, const char *input) {
             sprintf(result + strlen(result), "%d| %s", i++, line);
         fclose(f); return result;
     }
+    if (strcmp(name, "write") == 0) {
+        sscanf(strstr(input, "path") + 8, "%255[^\"]", path);
+        char *content = strstr(input, "content");
+        if (content) {
+            sscanf(content + 10, "%1000[^\"]", cmd);
+            FILE *f = fopen(path, "w"); if (!f) return "error: cannot open file";
+            fputs(cmd, f); fclose(f); return "ok";
+        }
+    }
     if (strcmp(name, "bash") == 0) {
         if ((p = strstr(input, "cmd"))) {
             sscanf(p + 6, "%1000[^\"]", cmd);
@@ -48,11 +57,49 @@ char *run_tool(const char *name, const char *input) {
             pclose(fp); return result;
         }
     }
+    if (strcmp(name, "edit") == 0) {
+        sscanf(strstr(input, "path") + 8, "%255[^\"]", path);
+        char old[256], new[256];
+        sscanf(strstr(input, "old") + 7, "%255[^\"]", old);
+        sscanf(strstr(input, "new") + 7, "%255[^\"]", new);
+        FILE *f = fopen(path, "r"); if (!f) return "error: file not found";
+        char *buf = NULL; size_t len = 0; int c;
+        while ((c = fgetc(f)) != EOF) { buf = realloc(buf, len + 2); buf[len++] = c; }
+        buf[len] = 0; fclose(f);
+        char *pos = strstr(buf, old); if (!pos) { free(buf); return "error: old_string not found"; }
+        char *next = strstr(pos + strlen(old), old);
+        if (next && !strstr(input, "\"all\":true")) { free(buf); return "error: old_string appears multiple times, use all=true"; }
+        size_t outlen = len + strlen(new) - strlen(old) + 1;
+        char *out = calloc(outlen, 1);
+        char *cursor = buf;
+        if (strstr(input, "\"all\":true")) {
+            while ((pos = strstr(cursor, old))) {
+                strncat(out, cursor, pos - cursor);
+                strcat(out, new);
+                cursor = pos + strlen(old);
+            }
+            strcat(out, cursor);
+        } else {
+            pos = strstr(cursor, old);
+            strncat(out, cursor, pos - cursor);
+            strcat(out, new);
+            strcat(out, pos + strlen(old));
+        }
+        f = fopen(path, "w"); fwrite(out, 1, strlen(out), f); fclose(f);
+        free(buf); free(out); return "ok";
+    }
     if (strcmp(name, "glob") == 0) {
         sscanf(strstr(input, "pat") + 7, "%255[^\"]", path);
         sprintf(cmd, "find . -name '%s' 2>/dev/null | head -50", path);
         FILE *fp = popen(cmd, "r"); result[0] = 0;
         while (fgets(result + strlen(result), 256, fp)); pclose(fp); return result;
+    }
+    if (strcmp(name, "grep") == 0) {
+        sscanf(strstr(input, "pat") + 7, "%255[^\"]", path); // reuse buffer
+        sprintf(cmd, "grep -R \"%s\" . -n 2>/dev/null | head -50", path);
+        FILE *fp = popen(cmd, "r"); result[0] = 0;
+        while (fgets(result + strlen(result), 256, fp) && strlen(result) < 3800);
+        pclose(fp); return result[0] ? result : "none";
     }
     return "ok";
 }
@@ -61,9 +108,13 @@ char *api_call() {
     static char body[65536];
     snprintf(body, sizeof(body),
         "{\"model\":\"%s\",\"max_tokens\":4096,\"system\":\"Concise assistant\",\"messages\":%s,"
-        "\"tools\":[{\"name\":\"read\",\"description\":\"Read\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},"
-        "{\"name\":\"bash\",\"description\":\"Run\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]}},"
-        "{\"name\":\"glob\",\"description\":\"Find\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"}},\"required\":[\"pat\"]}}]}", MODEL, msgs);
+        "\"tools\":["
+          "{\"name\":\"read\",\"description\":\"Read\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},"
+          "{\"name\":\"write\",\"description\":\"Write\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},"
+          "{\"name\":\"edit\",\"description\":\"Replace\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"old\":{\"type\":\"string\"},\"new\":{\"type\":\"string\"},\"all\":{\"type\":\"boolean\"}},\"required\":[\"path\",\"old\",\"new\"]}},"
+          "{\"name\":\"bash\",\"description\":\"Run\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]}},"
+          "{\"name\":\"glob\",\"description\":\"Find\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"}},\"required\":[\"pat\"]}},"
+          "{\"name\":\"grep\",\"description\":\"Search\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"pat\":{\"type\":\"string\"}},\"required\":[\"pat\"]}}]}", MODEL, msgs);
     
     CURL *curl = curl_easy_init();
     Buf resp = {0};
@@ -73,7 +124,7 @@ char *api_call() {
     char auth[128]; snprintf(auth, 128, "x-api-key: %s", KEY);
     hdrs = curl_slist_append(hdrs, auth);
     
-    curl_easy_setopt(curl, CURLOPT_URL, "https://api.anthropic.com/v1/messages");
+    curl_easy_setopt(curl, CURLOPT_URL, API_URL);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
@@ -87,6 +138,7 @@ char *api_call() {
 int main() {
     KEY = getenv("ANTHROPIC_API_KEY");
     MODEL = getenv("MODEL"); if (!MODEL) MODEL = "claude-sonnet-4-20250514";
+    API_URL = getenv("API_URL"); if (!API_URL) API_URL = "https://api.anthropic.com/v1/messages";
     printf(B "nanocode" R " | " D "%s" R "\n\n", MODEL);
     
     char input[1024];

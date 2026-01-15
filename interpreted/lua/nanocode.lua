@@ -6,6 +6,7 @@ local ltn12 = require("ltn12")
 
 local KEY = os.getenv("ANTHROPIC_API_KEY")
 local MODEL = os.getenv("MODEL") or "claude-sonnet-4-20250514"
+local API_URL = os.getenv("API_URL") or "https://api.anthropic.com/v1/messages"
 local R, B, D, C, G, BL = "\27[0m", "\27[1m", "\27[2m", "\27[36m", "\27[32m", "\27[34m"
 
 local function read_file(path)
@@ -41,7 +42,7 @@ local schema = {
 local function ask(messages)
     local body = json.encode({model=MODEL, max_tokens=4096, system="Concise coding assistant", messages=messages, tools=schema})
     local resp = {}
-    http.request{url="https://api.anthropic.com/v1/messages", method="POST", headers={["Content-Type"]="application/json", ["anthropic-version"]="2023-06-01", ["x-api-key"]=KEY, ["Content-Length"]=#body}, source=ltn12.source.string(body), sink=ltn12.sink.table(resp)}
+    http.request{url=API_URL, method="POST", headers={["Content-Type"]="application/json", ["anthropic-version"]="2023-06-01", ["x-api-key"]=KEY, ["Content-Length"]=#body}, source=ltn12.source.string(body), sink=ltn12.sink.table(resp)}
     return json.decode(table.concat(resp))
 end
 
@@ -51,8 +52,7 @@ local messages = {}
 while true do
     io.write(B .. BL .. "❯" .. R .. " "); io.flush()
     local input = io.read()
-    if not input or input == "/q" then break end
-    if input == "" then goto continue end
+    if not input or input == "/q" or input == "" then break end
     if input == "/c" then messages = {}; print(G .. "⏺ Cleared" .. R); goto continue end
 
     messages[#messages+1] = {role="user", content=input}

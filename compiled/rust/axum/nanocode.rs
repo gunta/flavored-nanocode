@@ -10,11 +10,48 @@ static MESSAGES: OnceCell<Mutex<Vec<Value>>> = OnceCell::const_new();
 
 fn tool(name: &str, input: &Value) -> String {
     match name {
-        "read" => fs::read_to_string(input["path"].as_str().unwrap_or(""))
-            .map(|c| c.lines().enumerate().map(|(i, l)| format!("{}| {}", i + 1, l)).collect::<Vec<_>>().join("\n"))
-            .unwrap_or_else(|e| format!("error: {}", e)),
+        "read" => {
+            let off = input["offset"].as_i64().unwrap_or(0) as usize;
+            let lim = input["limit"].as_i64().unwrap_or(i64::MAX) as usize;
+            fs::read_to_string(input["path"].as_str().unwrap_or(""))
+                .map(|c| c.lines().skip(off).take(lim)
+                    .enumerate()
+                    .map(|(i, l)| format!("{}| {}", off + i + 1, l))
+                    .collect::<Vec<_>>()
+                    .join("\n"))
+                .unwrap_or_else(|e| format!("error: {}", e))
+        },
         "write" => fs::write(input["path"].as_str().unwrap_or(""), input["content"].as_str().unwrap_or(""))
             .map(|_| "ok".into()).unwrap_or_else(|e| format!("error: {}", e)),
+        "edit" => {
+            let path = input["path"].as_str().unwrap_or("");
+            let old = input["old"].as_str().unwrap_or("");
+            let newv = input["new"].as_str().unwrap_or("");
+            let all = input["all"].as_bool().unwrap_or(false);
+            match fs::read_to_string(path) {
+                Ok(mut txt) => {
+                    let count = txt.matches(old).count();
+                    if count == 0 { return "error: old_string not found".into(); }
+                    if count > 1 && !all { return format!("error: old_string appears {} times, use all=true", count); }
+                    if all { txt = txt.replace(old, newv); } else { if let Some(pos) = txt.find(old) { txt.replace_range(pos..pos+old.len(), newv); } }
+                    fs::write(path, txt).map(|_| "ok".into()).unwrap_or_else(|e| format!("error: {}", e))
+                },
+                Err(e) => format!("error: {}", e)
+            }
+        },
+        "glob" => {
+            let pat = input["pat"].as_str().unwrap_or("*");
+            let base = input["path"].as_str().unwrap_or(".");
+            Command::new("sh").args(["-c", &format!("find {} -name '{}' | head -50", base, pat)])
+                .output().map(|o| String::from_utf8_lossy(&o.stdout).into()).unwrap_or_else(|e| format!("error: {}", e))
+        },
+        "grep" => {
+            let pat = input["pat"].as_str().unwrap_or("");
+            let base = input["path"].as_str().unwrap_or(".");
+            Command::new("sh").args(["-c", &format!("grep -R \"{}\" {} -n 2>/dev/null | head -50", pat, base)])
+                .output().map(|o| { let s = String::from_utf8_lossy(&o.stdout).into_owned(); if s.is_empty() { "none".into() } else { s } })
+                .unwrap_or_else(|e| format!("error: {}", e))
+        },
         "bash" => Command::new("sh").args(["-c", input["cmd"].as_str().unwrap_or("")])
             .output().map(|o| String::from_utf8_lossy(&o.stdout).into()).unwrap_or_else(|e| format!("error: {}", e)),
         _ => "unknown".into()
@@ -22,14 +59,21 @@ fn tool(name: &str, input: &Value) -> String {
 }
 
 async fn ask(messages: &[Value]) -> Value {
-    let key = env::var("ANTHROPIC_API_KEY").unwrap();
-    let model = env::var("MODEL").unwrap_or("claude-sonnet-4-20250514".into());
-    let schema = json!([{"name":"read","description":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
+    let key = env::var("OPENROUTER_API_KEY").ok().or_else(|| env::var("ANTHROPIC_API_KEY").ok()).unwrap_or_default();
+    let model = env::var("MODEL").unwrap_or_else(|_| if env::var("OPENROUTER_API_KEY").is_ok() { "anthropic/claude-opus-4-5".into() } else { "claude-opus-4-5".into() });
+    let api = env::var("API_URL").unwrap_or_else(|_| if env::var("OPENROUTER_API_KEY").is_ok() { "https://openrouter.ai/api/v1/messages".into() } else { "https://api.anthropic.com/v1/messages".into() });
+    let schema = json!([
+        {"name":"read","description":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
         {"name":"write","description":"Write","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
-        {"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]);
-    reqwest::Client::new().post("https://api.anthropic.com/v1/messages")
-        .header("Content-Type", "application/json").header("anthropic-version", "2023-06-01").header("x-api-key", key)
-        .json(&json!({"model": model, "max_tokens": 4096, "system": "Concise assistant", "messages": messages, "tools": schema}))
+        {"name":"edit","description":"Replace","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
+        {"name":"glob","description":"Find","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+        {"name":"grep","description":"Search","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+        {"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
+    ]);
+    let mut req = reqwest::Client::new().post(api)
+        .header("Content-Type", "application/json").header("anthropic-version", "2023-06-01");
+    if env::var("OPENROUTER_API_KEY").is_ok() { req = req.header("Authorization", format!("Bearer {}", key)); } else { req = req.header("x-api-key", key); }
+    req.json(&json!({"model": model, "max_tokens": 8192, "system": "Concise assistant", "messages": messages, "tools": schema}))
         .send().await.unwrap().json().await.unwrap()
 }
 

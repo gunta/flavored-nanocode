@@ -21,7 +21,10 @@ type tool_input = {
   path: option string;
   content: option string;
   cmd: option string;
-  pat: option string
+  pat: option string;
+  old: option string;
+  new: option string;
+  all: bool
 }
 
 (* Result type with refinement *)
@@ -30,7 +33,7 @@ type result =
   | Error : s:string -> result
 
 (* Tool name type *)
-type tool_name = | Read | Write | Bash | Glob | Grep
+type tool_name = | Read | Write | Edit | Bash | Glob | Grep
 
 (* Pure tool logic - verifiable *)
 val tool_name_to_string : tool_name -> string
@@ -58,6 +61,18 @@ let run_tool name input =
        (* File writing would happen here *)
        Ok "ok"
      | _, _ -> Error "missing arguments")
+  | Edit ->
+    (match input.path, input.old, input.new with
+     | Some p, Some o, Some n ->
+       let txt = In_channel.with_open_text p In_channel.input_all in
+       let cnt = FStar.String.indexes_of o txt |> List.length in
+       if cnt = 0 then Error "error: old_string not found"
+       else if cnt > 1 && not input.all then Error ("error: old_string appears " ^ (string_of_int cnt) ^ " times, use all=true")
+       else
+         let updated = if input.all then FStar.String.split o txt |> String.concat n else FStar.String.replace_first o n txt in
+         Out_channel.with_open_text p (fun oc -> Out_channel.output_string oc updated);
+         Ok "ok"
+     | _ -> Error "missing arguments")
   | Bash ->
     (match input.cmd with
      | Some cmd ->
@@ -72,9 +87,12 @@ let run_tool_total _ _ = ()
 
 (* Schema as verified data structure *)
 let schema : list (string * string * string) = [
-  ("read", "Read file", "path");
+  ("read", "Read file", "path,offset,limit");
   ("write", "Write file", "path,content");
-  ("bash", "Run command", "cmd")
+  ("edit", "Replace text", "path,old,new,all");
+  ("bash", "Run command", "cmd");
+  ("glob", "Find files", "pat");
+  ("grep", "Search", "pat")
 ]
 
 (* Main entry point *)

@@ -15,7 +15,10 @@ rm -f nanocode nanocode.o
 
 # Build
 as -o nanocode.o "$SOURCE"
-ld -o nanocode nanocode.o -lSystem -syslibroot $(xcrun -sdk macosx --show-sdk-path) -e _start -arch arm64
+ld -o nanocode nanocode.o \
+    -lSystem -framework Security -framework CoreFoundation \
+    -syslibroot "$(xcrun -sdk macosx --show-sdk-path)" \
+    -e _main -arch arm64
 
 # Run
 ./nanocode

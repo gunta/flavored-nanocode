@@ -12,6 +12,8 @@ import triton.language as tl
 import torch
 import json
 import os
+import glob as globlib
+import re
 import urllib.request
 
 # GPU-accelerated string processing kernel
@@ -51,26 +53,82 @@ def gpu_process(text: str) -> str:
     return ''.join(chr(c) for c in output.cpu().tolist())
 
 # Standard nanocode implementation
-KEY = os.environ.get("ANTHROPIC_API_KEY")
-MODEL = os.environ.get("MODEL", "claude-sonnet-4-20250514")
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
+KEY = OPENROUTER_KEY or os.environ.get("ANTHROPIC_API_KEY")
+API = os.environ.get("API_URL", "https://openrouter.ai/api/v1/messages" if OPENROUTER_KEY else "https://api.anthropic.com/v1/messages")
+MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4-5" if OPENROUTER_KEY else "claude-opus-4-5")
 R, B, D, C, G, BL = "\033[0m", "\033[1m", "\033[2m", "\033[36m", "\033[32m", "\033[34m"
 
-tools = {
-    "read": lambda a: "\n".join(f"{i+1}| {l}" for i, l in enumerate(open(a["path"]).readlines())),
-    "write": lambda a: (open(a["path"], "w").write(a["content"]), "ok")[1],
-    "bash": lambda a: __import__("subprocess").run(a["cmd"], shell=True, capture_output=True, text=True).stdout,
-}
+
+def _read(a):
+    lines = open(a["path"]).read().splitlines()
+    off = a.get("offset", 0)
+    lim = a.get("limit", len(lines))
+    return "\n".join(f"{off+i+1}| {l}" for i, l in enumerate(lines[off : off + lim]))
+
+
+def _write(a):
+    open(a["path"], "w").write(a["content"])
+    return "ok"
+
+
+def _edit(a):
+    text = open(a["path"]).read()
+    old, new = a["old"], a["new"]
+    count = text.count(old)
+    if not count:
+        return "error: old_string not found"
+    if count > 1 and not a.get("all"):
+        return f"error: old_string appears {count} times, use all=true"
+    updated = text.replace(old, new) if a.get("all") else text.replace(old, new, 1)
+    open(a["path"], "w").write(updated)
+    return "ok"
+
+
+def _glob(a):
+    pat = (a.get("path", ".") + "/" + a["pat"]).replace("//", "/")
+    files = sorted(globlib.glob(pat, recursive=True))
+    return "\n".join(files) or "none"
+
+
+def _grep(a):
+    regex = re.compile(a["pat"])
+    hits = []
+    for path in globlib.glob(a.get("path", ".") + "/**", recursive=True):
+        if os.path.isdir(path):
+            continue
+        try:
+            for i, line in enumerate(open(path), 1):
+                if regex.search(line):
+                    hits.append(f"{path}:{i}:{line.rstrip()}")
+        except Exception:
+            continue
+    return "\n".join(hits[:50]) or "none"
+
+
+def _bash(a):
+    return __import__("subprocess").run(a["cmd"], shell=True, capture_output=True, text=True).stdout
+
+
+tools = {"read": _read, "write": _write, "edit": _edit, "glob": _glob, "grep": _grep, "bash": _bash}
 
 schema = [
-    {"name": "read", "description": "Read file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+    {"name": "read", "description": "Read file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["path"]}},
     {"name": "write", "description": "Write file", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
+    {"name": "edit", "description": "Replace text", "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}, "all": {"type": "boolean"}}, "required": ["path", "old", "new"]}},
+    {"name": "glob", "description": "Find files", "input_schema": {"type": "object", "properties": {"pat": {"type": "string"}, "path": {"type": "string"}}, "required": ["pat"]}},
+    {"name": "grep", "description": "Search files", "input_schema": {"type": "object", "properties": {"pat": {"type": "string"}, "path": {"type": "string"}}, "required": ["pat"]}},
     {"name": "bash", "description": "Run command", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}},
 ]
 
 def ask(messages):
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages",
-        json.dumps({"model": MODEL, "max_tokens": 4096, "system": "Concise assistant", "messages": messages, "tools": schema}).encode(),
-        {"Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": KEY})
+    headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+    headers["Authorization" if OPENROUTER_KEY else "x-api-key"] = (f"Bearer {KEY}" if OPENROUTER_KEY else KEY)
+    req = urllib.request.Request(
+        API,
+        json.dumps({"model": MODEL, "max_tokens": 8192, "system": "Concise assistant", "messages": messages, "tools": schema}).encode(),
+        headers,
+    )
     return json.loads(urllib.request.urlopen(req).read())
 
 def main():

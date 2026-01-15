@@ -3,7 +3,7 @@
 import { $ } from "bun";
 
 const KEY = Bun.env.OPENROUTER_API_KEY || Bun.env.ANTHROPIC_API_KEY;
-const API = Bun.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1/messages" : "https://api.anthropic.com/v1/messages";
+const API = Bun.env.API_URL || (Bun.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1/messages" : "https://api.anthropic.com/v1/messages");
 const MODEL = Bun.env.MODEL || (Bun.env.OPENROUTER_API_KEY ? "anthropic/claude-opus-4" : "claude-sonnet-4-20250514");
 const [R, B, D, C, G] = ["\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[36m", "\x1b[32m"];
 
@@ -32,11 +32,12 @@ async function ask(messages: any[]) {
 console.log(`${B}nanocode${R} | ${D}${MODEL}${R}\n`);
 const messages: any[] = [];
 
-for await (const line of console.write(`${B}\x1b[34m❯${R} `), Bun.stdin.stream()) {
+process.stdout.write(`${B}\x1b[34m❯${R} `);
+for await (const line of Bun.stdin.stream()) {
   const input = new TextDecoder().decode(line).trim();
-  if (!input) { console.write(`${B}\x1b[34m❯${R} `); continue; }
+  if (!input) { process.stdout.write(`${B}\x1b[34m❯${R} `); continue; }
   if (input === "/q") break;
-  if (input === "/c") { messages.length = 0; console.log(`${G}⏺ Cleared${R}`); console.write(`${B}\x1b[34m❯${R} `); continue; }
+  if (input === "/c") { messages.length = 0; console.log(`${G}⏺ Cleared${R}`); process.stdout.write(`${B}\x1b[34m❯${R} `); continue; }
   
   messages.push({ role: "user", content: input });
   while (true) {
@@ -55,5 +56,5 @@ for await (const line of console.write(`${B}\x1b[34m❯${R} `), Bun.stdin.stream
     if (!results.length) break;
     messages.push({ role: "user", content: results });
   }
-  console.log(); console.write(`${B}\x1b[34m❯${R} `);
+  console.log(); process.stdout.write(`${B}\x1b[34m❯${R} `);
 }

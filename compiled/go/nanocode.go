@@ -99,6 +99,10 @@ func main() {
 	if model == "" {
 		model = "claude-sonnet-4-20250514"
 	}
+	apiURL := os.Getenv("API_URL")
+	if apiURL == "" {
+		apiURL = "https://api.anthropic.com/v1/messages"
+	}
 	fmt.Printf("%snanocode%s | %s%s%s\n\n", B, R, D, model, R)
 
 	var messages []map[string]any
@@ -126,7 +130,7 @@ func main() {
 
 		for {
 			body, _ := json.Marshal(map[string]any{"model": model, "max_tokens": 4096, "system": "Concise coding assistant", "messages": messages, "tools": schema})
-			req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+			req, _ := http.NewRequest("POST", apiURL, bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("anthropic-version", "2023-06-01")
 			req.Header.Set("x-api-key", key)

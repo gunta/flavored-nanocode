@@ -48,7 +48,7 @@ fn run_tool(name: &str, input: &Value) -> String {
 fn main() {
     let key = env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY required");
     let model = env::var("MODEL").unwrap_or("claude-sonnet-4-20250514".into());
-    let api = "https://api.anthropic.com/v1/messages";
+    let api = env::var("API_URL").unwrap_or("https://api.anthropic.com/v1/messages".into());
     
     println!("{B}nanocode{R} | {D}{model}{R}\n");
     let schema = json!([

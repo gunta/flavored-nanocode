@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 
 const KEY = process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY;
-const API = process.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1/messages" : "https://api.anthropic.com/v1/messages";
+const API = process.env.API_URL || (process.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1/messages" : "https://api.anthropic.com/v1/messages");
 const MODEL = process.env.MODEL || (process.env.OPENROUTER_API_KEY ? "anthropic/claude-opus-4" : "claude-sonnet-4-20250514");
 const [R, B, D, C, G] = ["\x1b[0m", "\x1b[1m", "\x1b[2m", "\x1b[36m", "\x1b[32m"];
 
@@ -38,31 +38,36 @@ async function ask(messages) {
 }
 
 console.log(`${B}nanocode${R} | ${D}${MODEL}${R}\n`);
-const rl = createInterface({ input: process.stdin, output: process.stdout });
+const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 const messages = [];
 
-const prompt = () => rl.question(`${B}\x1b[34m❯${R} `, async (input) => {
-  if (!input.trim()) return prompt();
-  if (input === "/q") return rl.close();
-  if (input === "/c") { messages.length = 0; console.log(`${G}⏺ Cleared${R}`); return prompt(); }
-  
-  messages.push({ role: "user", content: input });
-  while (1) {
-    const { content } = await ask(messages);
-    const results = [];
-    for (const b of content) {
-      if (b.type === "text") console.log(`\n${C}⏺${R} ${b.text}`);
-      if (b.type === "tool_use") {
-        console.log(`\n${G}⏺ ${b.name}${R}(${D}${JSON.stringify(b.input).slice(0,50)}${R})`);
-        const r = tools[b.name](b.input);
-        console.log(`  ${D}⎿ ${r.split("\n")[0].slice(0,60)}${R}`);
-        results.push({ type: "tool_result", tool_use_id: b.id, content: r });
+async function main() {
+  for await (const line of rl) {
+    process.stdout.write(`${B}\x1b[34m❯${R} `);
+    const input = line.trim();
+    if (!input) break;
+    if (input === "/q") break;
+    if (input === "/c") { messages.length = 0; console.log(`${G}⏺ Cleared${R}`); continue; }
+    
+    messages.push({ role: "user", content: input });
+    while (1) {
+      const { content } = await ask(messages);
+      const results = [];
+      for (const b of content) {
+        if (b.type === "text") console.log(`\n${C}⏺${R} ${b.text}`);
+        if (b.type === "tool_use") {
+          console.log(`\n${G}⏺ ${b.name}${R}(${D}${JSON.stringify(b.input).slice(0,50)}${R})`);
+          const r = tools[b.name](b.input);
+          console.log(`  ${D}⎿ ${r.split("\n")[0].slice(0,60)}${R}`);
+          results.push({ type: "tool_result", tool_use_id: b.id, content: r });
+        }
       }
+      messages.push({ role: "assistant", content });
+      if (!results.length) break;
+      messages.push({ role: "user", content: results });
     }
-    messages.push({ role: "assistant", content });
-    if (!results.length) break;
-    messages.push({ role: "user", content: results });
+    console.log();
   }
-  console.log(); prompt();
-});
-prompt();
+}
+
+main().catch(console.error);

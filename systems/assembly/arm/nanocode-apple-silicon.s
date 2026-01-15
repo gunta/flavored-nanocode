@@ -975,6 +975,7 @@ call_api:
     add     x9, x9, resp@PAGEOFF
     strb    wzr, [x9, x19]
     
+    mov     x0, x9              // Pass buffer pointer to find_text_simd
     bl      find_text_simd
     
     adrp    x0, nl@PAGE
@@ -1047,7 +1048,7 @@ _main:
     bl      puts_fast
     
     bl      gets_fast
-    cbz     x0, .Lmain_loop
+    cbz     x0, .Lquit          // Exit on EOF (for piped input/benchmarks)
     
     // Branchless command check using single 16-bit load
     adrp    x0, inp@PAGE

@@ -2,8 +2,9 @@
 // nanocode - minimal claude code alternative (Swift)
 import Foundation
 
-let KEY = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]!
+let KEY = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
 let MODEL = ProcessInfo.processInfo.environment["MODEL"] ?? "claude-sonnet-4-20250514"
+let API_URL = ProcessInfo.processInfo.environment["API_URL"] ?? "https://api.anthropic.com/v1/messages"
 let (R,B,D,C,G,BL) = ("\u{1b}[0m","\u{1b}[1m","\u{1b}[2m","\u{1b}[36m","\u{1b}[32m","\u{1b}[34m")
 
 func tool(_ name: String, _ input: [String:Any]) -> String {
@@ -48,7 +49,7 @@ let schema = """
 
 func ask(_ messages: [[String:Any]]) -> [String:Any] {
     let body: [String:Any] = ["model": MODEL, "max_tokens": 4096, "system": "Concise assistant", "messages": messages, "tools": try! JSONSerialization.jsonObject(with: schema.data(using: .utf8)!)]
-    var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+    var req = URLRequest(url: URL(string: API_URL)!)
     req.httpMethod = "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -69,7 +70,7 @@ var messages: [[String:Any]] = []
 
 while true {
     print("\(B)\(BL)❯\(R) ", terminator: ""); fflush(stdout)
-    guard let input = readLine()?.trimmingCharacters(in: .whitespaces), !input.isEmpty else { continue }
+    guard let input = readLine()?.trimmingCharacters(in: .whitespaces), !input.isEmpty else { break }
     if input == "/q" { break }
     if input == "/c" { messages = []; print("\(G)⏺ Cleared\(R)"); continue }
     

@@ -5,18 +5,21 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 var (
-	KEY      = os.Getenv("ANTHROPIC_API_KEY")
-	MODEL    = getEnv("MODEL", "claude-sonnet-4-20250514")
+	KEY      = func() string { if v := os.Getenv("OPENROUTER_API_KEY"); v != "" { return v }; return os.Getenv("ANTHROPIC_API_KEY") }()
+	API      = func() string { if os.Getenv("OPENROUTER_API_KEY") != "" { return "https://openrouter.ai/api/v1/messages" }; return "https://api.anthropic.com/v1/messages" }()
+	MODEL    = func() string { if v := os.Getenv("MODEL"); v != "" { return v }; if os.Getenv("OPENROUTER_API_KEY") != "" { return "anthropic/claude-opus-4-5" }; return "claude-opus-4-5" }()
 	messages []map[string]any
 )
 
@@ -26,12 +29,60 @@ func tool(name string, input map[string]any) string {
 	switch name {
 	case "read":
 		b, _ := os.ReadFile(input["path"].(string))
+		off := 0
+		if v, ok := input["offset"].(float64); ok { off = int(v) }
+		lim := -1
+		if v, ok := input["limit"].(float64); ok { lim = int(v) }
 		var lines []string
-		for i, l := range strings.Split(string(b), "\n") { lines = append(lines, string(rune(i+1))+"| "+l) }
+		for i, l := range strings.Split(string(b), "\n") {
+			if i < off { continue }
+			if lim >= 0 && len(lines) >= lim { break }
+			lines = append(lines, fmt.Sprintf("%d| %s", i+1, l))
+		}
 		return strings.Join(lines, "\n")
 	case "write":
 		os.WriteFile(input["path"].(string), []byte(input["content"].(string)), 0644)
 		return "ok"
+	case "edit":
+		path := input["path"].(string)
+		old := input["old"].(string)
+		newv := input["new"].(string)
+		all, _ := input["all"].(bool)
+		b, _ := os.ReadFile(path)
+		txt := string(b)
+		cnt := strings.Count(txt, old)
+		if cnt == 0 { return "error: old_string not found" }
+		if cnt > 1 && !all { return fmt.Sprintf("error: old_string appears %d times, use all=true", cnt) }
+		if all { txt = strings.ReplaceAll(txt, old, newv) } else { txt = strings.Replace(txt, old, newv, 1) }
+		os.WriteFile(path, []byte(txt), 0644)
+		return "ok"
+	case "glob":
+		base := "."
+		if v, ok := input["path"].(string); ok && v != "" { base = v }
+		pat := input["pat"].(string)
+		var matches []string
+		filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+			if err == nil && strings.Contains(path, pat) { matches = append(matches, path) }
+			if len(matches) >= 50 { return filepath.SkipDir }
+			return nil
+		})
+		return strings.Join(matches, "\n")
+	case "grep":
+		base := "."
+		if v, ok := input["path"].(string); ok && v != "" { base = v }
+		pat := input["pat"].(string)
+		var hits []string
+		filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() { return nil }
+			data, err := os.ReadFile(path); if err != nil { return nil }
+			for i, l := range strings.Split(string(data), "\n") {
+				if strings.Contains(l, pat) { hits = append(hits, fmt.Sprintf("%s:%d:%s", path, i+1, l)) }
+				if len(hits) >= 50 { return filepath.SkipDir }
+			}
+			return nil
+		})
+		if len(hits) == 0 { return "none" }
+		return strings.Join(hits, "\n")
 	case "bash":
 		out, _ := exec.Command("sh", "-c", input["cmd"].(string)).CombinedOutput()
 		return string(out)
@@ -39,14 +90,25 @@ func tool(name string, input map[string]any) string {
 	return "unknown"
 }
 
-var schema = json.RawMessage(`[{"name":"read","description":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},{"name":"write","description":"Write","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]`)
+var schema = json.RawMessage(`[
+  {"name":"read","description":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},
+  {"name":"write","description":"Write","input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
+  {"name":"edit","description":"Replace","input_schema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"all":{"type":"boolean"}},"required":["path","old","new"]}},
+  {"name":"glob","description":"Find","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+  {"name":"grep","description":"Search","input_schema":{"type":"object","properties":{"pat":{"type":"string"},"path":{"type":"string"}},"required":["pat"]}},
+  {"name":"bash","description":"Run","input_schema":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
+]`)
 
 func ask() map[string]any {
-	body, _ := json.Marshal(map[string]any{"model": MODEL, "max_tokens": 4096, "system": "Concise assistant", "messages": messages, "tools": schema})
-	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+	body, _ := json.Marshal(map[string]any{"model": MODEL, "max_tokens": 8192, "system": "Concise assistant", "messages": messages, "tools": schema})
+	req, _ := http.NewRequest("POST", API, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("x-api-key", KEY)
+	if os.Getenv("OPENROUTER_API_KEY") != "" {
+		req.Header.Set("Authorization", "Bearer "+KEY)
+	} else {
+		req.Header.Set("x-api-key", KEY)
+	}
 	resp, _ := http.DefaultClient.Do(req)
 	respBody, _ := io.ReadAll(resp.Body)
 	var data map[string]any

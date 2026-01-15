@@ -5,6 +5,7 @@ require 'json'
 
 KEY = ENV['ANTHROPIC_API_KEY']
 MODEL = ENV['MODEL'] || 'claude-sonnet-4-20250514'
+API_URL = ENV['API_URL'] || 'https://api.anthropic.com/v1/messages'
 R, B, D, C, G, BL = "\e[0m", "\e[1m", "\e[2m", "\e[36m", "\e[32m", "\e[34m"
 
 TOOLS = {
@@ -26,8 +27,8 @@ SCHEMA = [
 ]
 
 def ask(messages)
-  uri = URI('https://api.anthropic.com/v1/messages')
-  http = Net::HTTP.new(uri.host, uri.port).tap { |h| h.use_ssl = true }
+  uri = URI(API_URL)
+  http = Net::HTTP.new(uri.host, uri.port).tap { |h| h.use_ssl = uri.scheme == 'https' }
   req = Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json', 'anthropic-version' => '2023-06-01', 'x-api-key' => KEY)
   req.body = { model: MODEL, max_tokens: 4096, system: 'Concise coding assistant', messages: messages, tools: SCHEMA }.to_json
   JSON.parse(http.request(req).body)
@@ -39,8 +40,7 @@ messages = []
 loop do
   print "#{B}#{BL}❯#{R} "
   input = gets&.chomp
-  break if input.nil? || input == '/q'
-  next if input.empty?
+  break if input.nil? || input == '/q' || input.empty?
   (messages = []; puts "#{G}⏺ Cleared#{R}"; next) if input == '/c'
 
   messages << { role: 'user', content: input }
