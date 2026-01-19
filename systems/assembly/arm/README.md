@@ -4,6 +4,7 @@
 |------|--------|-------------|
 | `nanocode.s` | ARM64 Linux | Standard Linux ARM64 implementation |
 | `nanocode-apple-silicon.s` | M4/M5 Pro Max | **CPU-optimized** - NEON SIMD, cache hints, branchless |
+| `blas/nanocode.s` | Apple Silicon (macOS arm64) | **BLAS-optimized** - Accelerate.framework (CBLAS SDOT) |
 
 ---
 

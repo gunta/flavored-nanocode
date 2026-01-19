@@ -94,6 +94,7 @@ Each implementation is a complete agentic coding assistant with tool use — `re
 | C | [`compiled/c/nanocode.c`](compiled/c/nanocode.c) | libcurl |
 | C++ | [`compiled/cpp/nanocode.cpp`](compiled/cpp/nanocode.cpp) | libcurl |
 | Zig | [`zig/nanocode.zig`](zig/nanocode.zig) | 0 |
+| Zig (BLAS) | [`zig/blas/nanocode.zig`](zig/blas/nanocode.zig) | Accelerate (BLAS, macOS) |
 | Swift | [`compiled/swift/nanocode.swift`](compiled/swift/nanocode.swift) | 0 |
 | C# | [`dotnet/csharp/Nanocode.cs`](dotnet/csharp/Nanocode.cs) | 0 (.NET 6+) |
 | Odin | [`compiled/odin/nanocode.odin`](compiled/odin/nanocode.odin) | 0 |
@@ -132,6 +133,7 @@ Each implementation is a complete agentic coding assistant with tool use — `re
 | x86-64 | [`systems/assembly/x86/nanocode.asm`](systems/assembly/x86/nanocode.asm) | Linux |
 | x86-64 SIMD | [`systems/assembly/simd/nanocode.asm`](systems/assembly/simd/nanocode.asm) | AVX2/SSE4.2! |
 | ARM64 | [`systems/assembly/arm/nanocode.s`](systems/assembly/arm/nanocode.s) | aarch64 |
+| ARM64 (Apple Silicon + BLAS) | [`systems/assembly/arm/blas/nanocode.s`](systems/assembly/arm/blas/nanocode.s) | Accelerate (BLAS, macOS arm64) |
 | RISC-V | [`systems/assembly/riscv/nanocode.s`](systems/assembly/riscv/nanocode.s) | rv64 |
 | WebAssembly | [`systems/wasm/nanocode.wat`](systems/wasm/nanocode.wat) | WAT format |
 
