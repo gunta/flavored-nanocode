@@ -141,7 +141,7 @@ Each implementation is a complete agentic coding assistant with tool use — `re
 | Literate Haskell | [`markup/literate/nanocode.lhs`](markup/literate/nanocode.lhs) | Code IS documentation |
 | Org-mode | [`markup/org/nanocode.org`](markup/org/nanocode.org) | Emacs literate |
 | CWEB | [`markup/cweb/nanocode.w`](markup/cweb/nanocode.w) | Knuth's system |
-| Prose | [`markup/prose/nanocode.md`](markup/prose/nanocode.md) | Natural language |
+| Prose | [`markup/prose/nanocode.prose`](markup/prose/nanocode.prose) | Natural language |
 
 ### 🚀 Modern Languages (post-2010)
 | Language | Year | File | Deps |

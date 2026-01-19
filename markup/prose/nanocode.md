@@ -1,125 +1,78 @@
-# nanocode - Prose Edition
+# nanocode - OpenProse Edition
 
-> A minimal Claude Code alternative written in natural language.
-> See: https://www.prose.md/
+> A minimal agentic coding assistant written in OpenProse.
+> See: https://prose.md/
 
-## Configuration
+## What is OpenProse?
 
-Set the API key from the environment variable `ANTHROPIC_API_KEY`.
-Set the model to "claude-sonnet-4-20250514" by default.
-Initialize an empty message history.
+OpenProse is a programming language where **natural language becomes executable**. A long-running AI session is a Turing-complete computer—OpenProse provides the syntax to program it.
 
-## Main Program
+Key concepts:
+- **Sessions** — spawn AI subagents with `session "prompt"`
+- **Agents** — define reusable agents with `agent name:`
+- **Fourth Wall** — use `**...**` for semantic conditions the AI evaluates
+- **Prose Complete** — runs on Claude Code, OpenCode, Amp, or any compatible AI session
 
-Print "🧬 nanocode | Prose Language" followed by a blank line.
+## The Program
 
-Repeat forever:
-  - Print the prompt "❯ " without a newline.
-  - Read a line of input from the user.
-  - Trim whitespace from the input.
-  
-  - If the input is empty, continue to the next iteration.
-  
-  - If the input equals "/q":
-    - Print "Goodbye!"
-    - Exit the program.
-  
-  - If the input equals "/c":
-    - Clear the message history.
-    - Print "⏺ Cleared" in green.
-    - Continue to the next iteration.
-  
-  - Append a user message to the history with the input as content.
-  
-  - Call the Agent Loop.
-  
-  - Print a blank line.
+```prose
+# nanocode - OpenProse Edition
+# A minimal agentic coding assistant in OpenProse
+# See: https://prose.md/
 
-## Agent Loop
+# Define the coding agent
+agent coder:
+  model: sonnet
+  prompt: "You are a concise coding assistant. Use tools to read, write, edit files, search with glob/grep, and run shell commands. Be direct and helpful."
 
-Repeat until no tool calls:
-  - Call the Claude API with:
-    - The configured model
-    - Maximum 4096 tokens
-    - System prompt: "Concise coding assistant"
-    - The message history
-    - The tool schema
-  
-  - For each block in the response content:
-    - If the block type is "text":
-      - Print "⏺ " in cyan followed by the text.
-    
-    - If the block type is "tool_use":
-      - Print "⏺ " in green followed by the tool name.
-      - Execute the tool with the given input.
-      - Print "  ⎿ " in dim followed by the first line of the result.
-      - Add a tool result to the results list.
-  
-  - Append an assistant message to the history.
-  - If no tool results, break the loop.
-  - Append a user message with the tool results.
+# Main interaction loop - keep coding until the user is satisfied
+loop until **the user says goodbye or quits**:
+  session: coder
+    prompt: "Help the user with their coding task. Read files to understand context, make edits as needed, run commands to verify changes. Ask clarifying questions if the request is ambiguous."
+```
 
-## Tool Definitions
+## How It Works
 
-### Read Tool
-Description: "Read file contents with line numbers"
-Required: path (string)
-Optional: offset (integer), limit (integer)
+In OpenProse, you don't define tools—the AI session already has them. The `session` keyword spawns a real subagent that can:
 
-To execute:
-  - Open the file at the given path.
-  - Read all lines.
-  - Number each line starting from offset + 1.
-  - Return the numbered lines joined by newlines.
+- **Read files** — examine code, configs, documentation
+- **Write/edit files** — make changes to the codebase
+- **Run commands** — execute shell commands, run tests
+- **Search** — glob for files, grep for patterns
 
-### Write Tool
-Description: "Write content to a file"
-Required: path (string), content (string)
+The `loop until **condition**:` construct uses the AI's judgment to determine when the condition is met. This is the "fourth wall" syntax—you're speaking directly to the OpenProse VM.
 
-To execute:
-  - Open the file at the given path for writing.
-  - Write the content.
-  - Return "ok".
+## Running It
 
-### Edit Tool
-Description: "Replace text in a file"
-Required: path (string), old (string), new (string)
-Optional: all (boolean)
+### Claude Code
+```bash
+claude plugin marketplace add https://github.com/openprose/prose.git
+claude plugin install open-prose@prose
+# Then: "run nanocode.prose"
+```
 
-To execute:
-  - Read the file content.
-  - If old string not found, return "error: not found".
-  - Replace old with new (all occurrences if all is true).
-  - Write the modified content.
-  - Return "ok".
+### OpenCode
+```bash
+git clone https://github.com/openprose/prose.git ~/.config/opencode/skill/open-prose
+# Then: "run nanocode.prose"
+```
 
-### Glob Tool
-Description: "Find files matching a pattern"
-Required: pat (string)
-Optional: path (string)
+### Amp
+```bash
+git clone https://github.com/openprose/prose.git ~/.config/agents/skills/open-prose
+# Then: "run nanocode.prose"
+```
 
-To execute:
-  - Search for files matching the pattern.
-  - Return up to 50 matches joined by newlines.
+## Why OpenProse?
 
-### Grep Tool  
-Description: "Search for pattern in files"
-Required: pat (string)
-Optional: path (string)
+Traditional implementations of nanocode require:
+- HTTP client code for the Claude API
+- JSON parsing for tool calls
+- REPL loop implementation
+- Tool execution handlers
 
-To execute:
-  - Search files for lines matching the pattern.
-  - Return matches in format "file:line:content".
-
-### Bash Tool
-Description: "Execute a shell command"
-Required: cmd (string)
-
-To execute:
-  - Run the command in a shell.
-  - Return the output.
+OpenProse eliminates all of that. The AI session IS the runtime. The specification IS the implementation.
 
 ---
 
-*Prose is a literate programming language where the code IS the documentation.*
-*In the AI era, natural language becomes executable.*
+*In the AI era, the best code is the code you don't have to write.*

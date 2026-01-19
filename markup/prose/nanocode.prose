@@ -1,0 +1,18 @@
+# nanocode - OpenProse Edition
+# A minimal agentic coding assistant in OpenProse
+# See: https://prose.md/
+
+# Define the coding agent
+agent coder:
+  model: sonnet
+  prompt: "You are a concise coding assistant. Use tools to read, write, edit files, search with glob/grep, and run shell commands. Be direct and helpful."
+
+# Main interaction loop - keep coding until the user is satisfied
+loop until **the user says goodbye or quits**:
+  session: coder
+    prompt: "Help the user with their coding task. Read files to understand context, make edits as needed, run commands to verify changes. Ask clarifying questions if the request is ambiguous."
+
+# ---
+# OpenProse runs on any Prose Complete system (Claude Code, OpenCode, Amp).
+# The session itself has file and shell access - no tool definitions needed.
+# Natural language becomes executable in the AI era.

@@ -3,8 +3,11 @@
 Mix.install([{:req, "~> 0.4"}])
 
 defmodule Nano do
-  @key System.get_env("ANTHROPIC_API_KEY")
-  @model System.get_env("MODEL") || "claude-sonnet-4-20250514"
+  @or_key System.get_env("OPENROUTER_API_KEY")
+  @key @or_key || System.get_env("ANTHROPIC_API_KEY")
+  @model System.get_env("MODEL") || (if @or_key, do: "anthropic/claude-opus-4-5", else: "claude-opus-4-5")
+  @api_url if @or_key, do: "https://openrouter.ai/api/v1/messages", else: "https://api.anthropic.com/v1/messages"
+  @auth_header if @or_key, do: {"authorization", "Bearer #{@key}"}, else: {"x-api-key", @key}
   @r "\e[0m"; @b "\e[1m"; @d "\e[2m"; @c "\e[36m"; @g "\e[32m"; @bl "\e[34m"
 
   @schema [
@@ -27,9 +30,9 @@ defmodule Nano do
   def tool("bash", %{"cmd" => cmd}), do: System.cmd("sh", ["-c", cmd]) |> elem(0)
 
   def ask(msgs) do
-    Req.post!("https://api.anthropic.com/v1/messages",
-      headers: [{"content-type", "application/json"}, {"anthropic-version", "2023-06-01"}, {"x-api-key", @key}],
-      json: %{model: @model, max_tokens: 4096, system: "Concise assistant", messages: msgs, tools: @schema}
+    Req.post!(@api_url,
+      headers: [{"content-type", "application/json"}, {"anthropic-version", "2023-06-01"}, @auth_header],
+      json: %{model: @model, max_tokens: 8192, system: "Concise assistant", messages: msgs, tools: @schema}
     ).body
   end
 
@@ -64,5 +67,7 @@ defmodule Nano do
   end
 end
 
-IO.puts("#{"\e[1m"}nanocode#{"\e[0m"} | #{"\e[2m"}#{System.get_env("MODEL") || "claude-sonnet-4-20250514"}#{"\e[0m"}\n")
+or_key = System.get_env("OPENROUTER_API_KEY")
+model = System.get_env("MODEL") || (if or_key, do: "anthropic/claude-opus-4-5", else: "claude-opus-4-5")
+IO.puts("#{"\e[1m"}nanocode#{"\e[0m"} | #{"\e[2m"}#{model}#{"\e[0m"}\n")
 Nano.run()
